@@ -62,13 +62,13 @@ public class SubsonicController : ControllerBase
         return parameters;
     }
 
-    private async Task<(string Body, string? ContentType)> RelayToSubsonic(string endpoint, Dictionary<string, string> parameters)
+    private async Task<(object Body, string? ContentType)> RelayToSubsonic(string endpoint, Dictionary<string, string> parameters)
     {
         var query = string.Join("&", parameters.Select(kv => $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
         var url = $"{_subsonicSettings.Url}/{endpoint}?{query}";
         HttpResponseMessage response = await _httpClient.GetAsync(url);
         response.EnsureSuccessStatusCode();
-        var body = await response.Content.ReadAsStringAsync();
+        var body = await response.Content.ReadAsByteArrayAsync();
         var contentType = response.Content.Headers.ContentType?.ToString();
         return (body, contentType);
     }
@@ -79,7 +79,7 @@ public class SubsonicController : ControllerBase
     {
         var parameters = await ExtractAllParameters();
         var xml = await RelayToSubsonic("ping", parameters);
-        var doc = XDocument.Parse(xml.Body);
+        var doc = XDocument.Parse((string)xml.Body);
         var status = doc.Root?.Attribute("status")?.Value;
         return Ok(new { status });
     }
@@ -94,7 +94,7 @@ public class SubsonicController : ControllerBase
         {
             var result = await RelayToSubsonic(endpoint, parameters);
             var contentType = result.ContentType ?? $"application/{parameters.GetValueOrDefault("f", "xml")}";
-            return Content(result.Body, contentType);
+            return File((byte[])result.Body, contentType);
         }
         catch (HttpRequestException ex)
         {
