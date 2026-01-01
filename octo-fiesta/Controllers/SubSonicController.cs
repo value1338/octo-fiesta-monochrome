@@ -241,6 +241,20 @@ public class SubsonicController : ControllerBase
             }
 
             var albums = await _metadataService.GetArtistAlbumsAsync(provider!, externalId!);
+            
+            // Fill artist info for each album (Deezer API doesn't include it in artist/albums endpoint)
+            foreach (var album in albums)
+            {
+                if (string.IsNullOrEmpty(album.Artist))
+                {
+                    album.Artist = artist.Name;
+                }
+                if (string.IsNullOrEmpty(album.ArtistId))
+                {
+                    album.ArtistId = artist.Id;
+                }
+            }
+            
             return CreateSubsonicArtistResponse(format, artist, albums);
         }
 
@@ -253,6 +267,7 @@ public class SubsonicController : ControllerBase
 
         var navidromeContent = Encoding.UTF8.GetString(navidromeResult.Body);
         string artistName = "";
+        string localArtistId = id; // Keep the local artist ID for merged albums
         var localAlbums = new List<object>();
         object? artistData = null;
 
@@ -289,6 +304,20 @@ public class SubsonicController : ControllerBase
             if (deezerArtist.Name.Equals(artistName, StringComparison.OrdinalIgnoreCase))
             {
                 deezerAlbums = await _metadataService.GetArtistAlbumsAsync("deezer", deezerArtist.ExternalId!);
+                
+                // Fill artist info for each album (Deezer API doesn't include it in artist/albums endpoint)
+                // Use local artist ID and name so albums link back to the local artist
+                foreach (var album in deezerAlbums)
+                {
+                    if (string.IsNullOrEmpty(album.Artist))
+                    {
+                        album.Artist = artistName;
+                    }
+                    if (string.IsNullOrEmpty(album.ArtistId))
+                    {
+                        album.ArtistId = localArtistId;
+                    }
+                }
             }
         }
 
