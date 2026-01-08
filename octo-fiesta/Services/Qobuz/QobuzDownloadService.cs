@@ -2,10 +2,13 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using octo_fiesta.Models;
+using octo_fiesta.Services;
+using octo_fiesta.Services.Deezer;
+using octo_fiesta.Services.Local;
 using Microsoft.Extensions.Options;
 using IOFile = System.IO.File;
 
-namespace octo_fiesta.Services;
+namespace octo_fiesta.Services.Qobuz;
 
 /// <summary>
 /// Download service implementation for Qobuz

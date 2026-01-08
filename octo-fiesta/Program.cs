@@ -1,5 +1,8 @@
 using octo_fiesta.Models;
 using octo_fiesta.Services;
+using octo_fiesta.Services.Deezer;
+using octo_fiesta.Services.Qobuz;
+using octo_fiesta.Services.Local;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -13,6 +16,8 @@ builder.Services.AddSwaggerGen();
 // Configuration
 builder.Services.Configure<SubsonicSettings>(
     builder.Configuration.GetSection("Subsonic"));
+builder.Services.Configure<DeezerSettings>(
+    builder.Configuration.GetSection("Deezer"));
 builder.Services.Configure<QobuzSettings>(
     builder.Configuration.GetSection("Qobuz"));
 

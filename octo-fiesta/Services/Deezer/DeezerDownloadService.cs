@@ -5,26 +5,13 @@ using Org.BouncyCastle.Crypto.Engines;
 using Org.BouncyCastle.Crypto.Modes;
 using Org.BouncyCastle.Crypto.Parameters;
 using octo_fiesta.Models;
+using octo_fiesta.Services;
+using octo_fiesta.Services.Local;
 using Microsoft.Extensions.Options;
 using TagLib;
 using IOFile = System.IO.File;
 
-namespace octo_fiesta.Services;
-
-/// <summary>
-/// Configuration for the Deezer downloader
-/// </summary>
-public class DeezerDownloaderSettings
-{
-    public string? Arl { get; set; }
-    public string? ArlFallback { get; set; }
-    public string DownloadPath { get; set; } = "./downloads";
-    /// <summary>
-    /// Preferred audio quality: FLAC, MP3_320, MP3_128
-    /// If not specified or unavailable, the highest available quality will be used.
-    /// </summary>
-    public string? Quality { get; set; }
-}
+namespace octo_fiesta.Services.Deezer;
 
 /// <summary>
 /// C# port of the DeezerDownloader JavaScript
@@ -66,6 +53,7 @@ public class DeezerDownloadService : IDownloadService
         ILocalLibraryService localLibraryService,
         IMusicMetadataService metadataService,
         IOptions<SubsonicSettings> subsonicSettings,
+        IOptions<DeezerSettings> deezerSettings,
         ILogger<DeezerDownloadService> logger)
     {
         _httpClient = httpClientFactory.CreateClient();
@@ -75,10 +63,11 @@ public class DeezerDownloadService : IDownloadService
         _subsonicSettings = subsonicSettings.Value;
         _logger = logger;
         
+        var deezer = deezerSettings.Value;
         _downloadPath = configuration["Library:DownloadPath"] ?? "./downloads";
-        _arl = configuration["Deezer:Arl"];
-        _arlFallback = configuration["Deezer:ArlFallback"];
-        _preferredQuality = configuration["Deezer:Quality"];
+        _arl = deezer.Arl;
+        _arlFallback = deezer.ArlFallback;
+        _preferredQuality = deezer.Quality;
         
         if (!Directory.Exists(_downloadPath))
         {

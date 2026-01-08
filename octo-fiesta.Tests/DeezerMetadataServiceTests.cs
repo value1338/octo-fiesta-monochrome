@@ -1,4 +1,4 @@
-using octo_fiesta.Services;
+using octo_fiesta.Services.Deezer;
 using octo_fiesta.Models;
 using Moq;
 using Moq.Protected;

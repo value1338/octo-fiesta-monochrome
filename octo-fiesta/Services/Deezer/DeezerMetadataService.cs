@@ -2,7 +2,7 @@ using octo_fiesta.Models;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 
-namespace octo_fiesta.Services;
+namespace octo_fiesta.Services.Deezer;
 
 /// <summary>
 /// Metadata service implementation using the Deezer API (free, no key required)

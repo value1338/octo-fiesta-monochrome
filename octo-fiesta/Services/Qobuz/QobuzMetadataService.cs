@@ -2,7 +2,7 @@ using octo_fiesta.Models;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 
-namespace octo_fiesta.Services;
+namespace octo_fiesta.Services.Qobuz;
 
 /// <summary>
 /// Metadata service implementation using the Qobuz API
