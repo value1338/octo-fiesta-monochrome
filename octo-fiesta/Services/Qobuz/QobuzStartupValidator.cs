@@ -1,23 +1,25 @@
 using Microsoft.Extensions.Options;
 using octo_fiesta.Models;
+using octo_fiesta.Services.Validation;
 
 namespace octo_fiesta.Services.Qobuz;
 
 /// <summary>
 /// Validates Qobuz credentials at startup
 /// </summary>
-public class QobuzStartupValidator
+public class QobuzStartupValidator : BaseStartupValidator
 {
     private readonly IOptions<QobuzSettings> _qobuzSettings;
-    private readonly HttpClient _httpClient;
+
+    public override string ServiceName => "Qobuz";
 
     public QobuzStartupValidator(IOptions<QobuzSettings> qobuzSettings, HttpClient httpClient)
+        : base(httpClient)
     {
         _qobuzSettings = qobuzSettings;
-        _httpClient = httpClient;
     }
 
-    public async Task ValidateAsync(CancellationToken cancellationToken)
+    public override async Task<ValidationResult> ValidateAsync(CancellationToken cancellationToken)
     {
         var userAuthToken = _qobuzSettings.Value.UserAuthToken;
         var userId = _qobuzSettings.Value.UserId;
@@ -29,14 +31,14 @@ public class QobuzStartupValidator
         {
             WriteStatus("Qobuz UserAuthToken", "NOT CONFIGURED", ConsoleColor.Red);
             WriteDetail("Set the Qobuz__UserAuthToken environment variable");
-            return;
+            return ValidationResult.NotConfigured("Qobuz UserAuthToken not configured");
         }
 
         if (string.IsNullOrWhiteSpace(userId))
         {
             WriteStatus("Qobuz UserId", "NOT CONFIGURED", ConsoleColor.Red);
             WriteDetail("Set the Qobuz__UserId environment variable");
-            return;
+            return ValidationResult.NotConfigured("Qobuz UserId not configured");
         }
 
         WriteStatus("Qobuz UserAuthToken", MaskSecret(userAuthToken), ConsoleColor.Cyan);
@@ -45,6 +47,8 @@ public class QobuzStartupValidator
 
         // Validate token by calling Qobuz API
         await ValidateQobuzTokenAsync(userAuthToken, userId, cancellationToken);
+
+        return ValidationResult.Success("Qobuz validation completed");
     }
 
     private async Task ValidateQobuzTokenAsync(string userAuthToken, string userId, CancellationToken cancellationToken)
@@ -121,38 +125,5 @@ public class QobuzStartupValidator
             WriteStatus(fieldName, "ERROR", ConsoleColor.Red);
             WriteDetail(ex.Message);
         }
-    }
-
-    private static void WriteStatus(string label, string value, ConsoleColor valueColor)
-    {
-        Console.Write($"  {label}: ");
-        var originalColor = Console.ForegroundColor;
-        Console.ForegroundColor = valueColor;
-        Console.WriteLine(value);
-        Console.ForegroundColor = originalColor;
-    }
-
-    private static void WriteDetail(string message)
-    {
-        var originalColor = Console.ForegroundColor;
-        Console.ForegroundColor = ConsoleColor.DarkGray;
-        Console.WriteLine($"    -> {message}");
-        Console.ForegroundColor = originalColor;
-    }
-
-    private static string MaskSecret(string secret)
-    {
-        if (string.IsNullOrEmpty(secret))
-        {
-            return "(empty)";
-        }
-
-        const int visibleChars = 4;
-        if (secret.Length <= visibleChars)
-        {
-            return new string('*', secret.Length);
-        }
-
-        return secret[..visibleChars] + new string('*', Math.Min(secret.Length - visibleChars, 8));
     }
 }

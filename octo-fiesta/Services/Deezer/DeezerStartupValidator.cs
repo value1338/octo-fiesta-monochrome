@@ -2,24 +2,26 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using octo_fiesta.Models;
+using octo_fiesta.Services.Validation;
 
 namespace octo_fiesta.Services.Deezer;
 
 /// <summary>
 /// Validates Deezer ARL credentials at startup
 /// </summary>
-public class DeezerStartupValidator
+public class DeezerStartupValidator : BaseStartupValidator
 {
     private readonly DeezerSettings _settings;
-    private readonly HttpClient _httpClient;
+
+    public override string ServiceName => "Deezer";
 
     public DeezerStartupValidator(IOptions<DeezerSettings> settings, HttpClient httpClient)
+        : base(httpClient)
     {
         _settings = settings.Value;
-        _httpClient = httpClient;
     }
 
-    public async Task ValidateAsync(CancellationToken cancellationToken)
+    public override async Task<ValidationResult> ValidateAsync(CancellationToken cancellationToken)
     {
         var arl = _settings.Arl;
         var arlFallback = _settings.ArlFallback;
@@ -31,7 +33,7 @@ public class DeezerStartupValidator
         {
             WriteStatus("Deezer ARL", "NOT CONFIGURED", ConsoleColor.Red);
             WriteDetail("Set the Deezer__Arl environment variable");
-            return;
+            return ValidationResult.NotConfigured("Deezer ARL not configured");
         }
 
         WriteStatus("Deezer ARL", MaskSecret(arl), ConsoleColor.Cyan);
@@ -50,6 +52,8 @@ public class DeezerStartupValidator
         {
             await ValidateArlTokenAsync(arlFallback, "fallback", cancellationToken);
         }
+
+        return ValidationResult.Success("Deezer validation completed");
     }
 
     private async Task ValidateArlTokenAsync(string arl, string label, CancellationToken cancellationToken)
@@ -149,38 +153,5 @@ public class DeezerStartupValidator
         }
         
         return "Free";
-    }
-
-    private static void WriteStatus(string label, string value, ConsoleColor valueColor)
-    {
-        Console.Write($"  {label}: ");
-        var originalColor = Console.ForegroundColor;
-        Console.ForegroundColor = valueColor;
-        Console.WriteLine(value);
-        Console.ForegroundColor = originalColor;
-    }
-
-    private static void WriteDetail(string message)
-    {
-        var originalColor = Console.ForegroundColor;
-        Console.ForegroundColor = ConsoleColor.DarkGray;
-        Console.WriteLine($"    -> {message}");
-        Console.ForegroundColor = originalColor;
-    }
-
-    private static string MaskSecret(string secret)
-    {
-        if (string.IsNullOrEmpty(secret))
-        {
-            return "(empty)";
-        }
-
-        const int visibleChars = 4;
-        if (secret.Length <= visibleChars)
-        {
-            return new string('*', secret.Length);
-        }
-
-        return secret[..visibleChars] + new string('*', Math.Min(secret.Length - visibleChars, 8));
     }
 }

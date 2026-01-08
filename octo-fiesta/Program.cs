@@ -3,6 +3,7 @@ using octo_fiesta.Services;
 using octo_fiesta.Services.Deezer;
 using octo_fiesta.Services.Qobuz;
 using octo_fiesta.Services.Local;
+using octo_fiesta.Services.Validation;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -43,8 +44,13 @@ else
     builder.Services.AddSingleton<IDownloadService, DeezerDownloadService>();
 }
 
-// Startup validation - runs at application startup to validate configuration
-builder.Services.AddHostedService<StartupValidationService>();
+// Startup validation - register validators
+builder.Services.AddSingleton<IStartupValidator, SubsonicStartupValidator>();
+builder.Services.AddSingleton<IStartupValidator, DeezerStartupValidator>();
+builder.Services.AddSingleton<IStartupValidator, QobuzStartupValidator>();
+
+// Register orchestrator as hosted service
+builder.Services.AddHostedService<StartupValidationOrchestrator>();
 
 builder.Services.AddCors(options =>
 {
