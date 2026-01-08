@@ -1,5 +1,5 @@
 using Microsoft.Extensions.Options;
-using octo_fiesta.Models;
+using octo_fiesta.Models.Settings;
 using octo_fiesta.Services.Deezer;
 using octo_fiesta.Services.Qobuz;
 

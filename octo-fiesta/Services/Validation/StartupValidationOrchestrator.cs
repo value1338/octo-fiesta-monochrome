@@ -1,5 +1,5 @@
 using Microsoft.Extensions.Options;
-using octo_fiesta.Models;
+using octo_fiesta.Models.Settings;
 
 namespace octo_fiesta.Services.Validation;
 
