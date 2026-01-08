@@ -4,6 +4,7 @@ using octo_fiesta.Services.Deezer;
 using octo_fiesta.Services.Qobuz;
 using octo_fiesta.Services.Local;
 using octo_fiesta.Services.Validation;
+using octo_fiesta.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -13,6 +14,10 @@ builder.Services.AddControllers();
 builder.Services.AddHttpClient();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+// Exception handling
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
 
 // Configuration
 builder.Services.Configure<SubsonicSettings>(
@@ -66,6 +71,8 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
+app.UseExceptionHandler(_ => { }); // Global exception handler
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
