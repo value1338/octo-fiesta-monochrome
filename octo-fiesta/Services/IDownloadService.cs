@@ -1,4 +1,8 @@
-using octo_fiesta.Models;
+using octo_fiesta.Models.Domain;
+using octo_fiesta.Models.Settings;
+using octo_fiesta.Models.Download;
+using octo_fiesta.Models.Search;
+using octo_fiesta.Models.Subsonic;
 
 namespace octo_fiesta.Services;
 
@@ -24,6 +28,14 @@ public interface IDownloadService
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>A stream of the audio file</returns>
     Task<Stream> DownloadAndStreamAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default);
+    
+    /// <summary>
+    /// Downloads remaining tracks from an album in background (excluding the specified track)
+    /// </summary>
+    /// <param name="externalProvider">The provider (deezer, spotify)</param>
+    /// <param name="albumExternalId">The album ID on the external provider</param>
+    /// <param name="excludeTrackExternalId">The track ID to exclude (already downloaded)</param>
+    void DownloadRemainingAlbumTracksInBackground(string externalProvider, string albumExternalId, string excludeTrackExternalId);
     
     /// <summary>
     /// Checks if a song is currently being downloaded

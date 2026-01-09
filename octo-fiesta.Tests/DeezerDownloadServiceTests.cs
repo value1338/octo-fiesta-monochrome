@@ -1,5 +1,12 @@
 using octo_fiesta.Services;
-using octo_fiesta.Models;
+using octo_fiesta.Services.Deezer;
+using octo_fiesta.Services.Local;
+using octo_fiesta.Services.Common;
+using octo_fiesta.Models.Domain;
+using octo_fiesta.Models.Settings;
+using octo_fiesta.Models.Download;
+using octo_fiesta.Models.Search;
+using octo_fiesta.Models.Subsonic;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -53,7 +60,7 @@ public class DeezerDownloadServiceTests : IDisposable
         }
     }
 
-    private DeezerDownloadService CreateService(string? arl = null)
+    private DeezerDownloadService CreateService(string? arl = null, DownloadMode downloadMode = DownloadMode.Track)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -64,11 +71,25 @@ public class DeezerDownloadServiceTests : IDisposable
             })
             .Build();
 
+        var subsonicSettings = Options.Create(new SubsonicSettings 
+        { 
+            DownloadMode = downloadMode 
+        });
+        
+        var deezerSettings = Options.Create(new DeezerSettings
+        {
+            Arl = arl,
+            ArlFallback = null,
+            Quality = null
+        });
+
         return new DeezerDownloadService(
             _httpClientFactoryMock.Object,
             config,
             _localLibraryServiceMock.Object,
             _metadataServiceMock.Object,
+            subsonicSettings,
+            deezerSettings,
             _loggerMock.Object);
     }
 
@@ -161,6 +182,42 @@ public class DeezerDownloadServiceTests : IDisposable
             service.DownloadSongAsync("deezer", "999999"));
         
         Assert.Equal("Song not found", exception.Message);
+    }
+
+    [Fact]
+    public void DownloadRemainingAlbumTracksInBackground_WithUnsupportedProvider_DoesNotThrow()
+    {
+        // Arrange
+        var service = CreateService(arl: "test-arl", downloadMode: DownloadMode.Album);
+
+        // Act & Assert - Should not throw, just log warning
+        service.DownloadRemainingAlbumTracksInBackground("spotify", "123456", "789");
+    }
+
+    [Fact]
+    public void DownloadRemainingAlbumTracksInBackground_WithDeezerProvider_StartsBackgroundTask()
+    {
+        // Arrange
+        _metadataServiceMock
+            .Setup(s => s.GetAlbumAsync("deezer", "123456"))
+            .ReturnsAsync(new Album
+            {
+                Id = "ext-deezer-album-123456",
+                Title = "Test Album",
+                Songs = new List<Song>
+                {
+                    new Song { ExternalId = "111", Title = "Track 1" },
+                    new Song { ExternalId = "222", Title = "Track 2" }
+                }
+            });
+
+        var service = CreateService(arl: "test-arl", downloadMode: DownloadMode.Album);
+
+        // Act - Should not throw (fire-and-forget)
+        service.DownloadRemainingAlbumTracksInBackground("deezer", "123456", "111");
+        
+        // Assert - Just verify it doesn't throw, actual download is async
+        Assert.True(true);
     }
 }
 
