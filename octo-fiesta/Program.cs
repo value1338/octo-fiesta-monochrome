@@ -119,4 +119,22 @@ app.UseCors();
 
 app.MapControllers();
 
-app.Run();
+// Start the application
+app.Start();
+
+// Display listening URL after startup
+foreach (var url in app.Urls)
+{
+    Console.ForegroundColor = ConsoleColor.Green;
+    Console.Write("✓ ");
+    Console.ResetColor();
+    Console.Write("Listening on: ");
+    Console.ForegroundColor = ConsoleColor.Cyan;
+    Console.WriteLine(url);
+    Console.ResetColor();
+}
+
+Console.WriteLine();
+
+// Wait for shutdown
+app.WaitForShutdown();
