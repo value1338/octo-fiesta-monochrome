@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace octo_fiesta.Models.SquidWTF;
@@ -106,6 +107,7 @@ public class QobuzArtist
     public long Id { get; set; }
     
     [JsonPropertyName("name")]
+    [JsonConverter(typeof(QobuzNameConverter))]
     public string? Name { get; set; }
     
     [JsonPropertyName("image")]
@@ -113,6 +115,62 @@ public class QobuzArtist
     
     [JsonPropertyName("albums_count")]
     public int AlbumsCount { get; set; }
+}
+
+/// <summary>
+/// Converter to handle Qobuz "name" field which can be either a string or an object with "display" property
+/// </summary>
+public class QobuzNameConverter : JsonConverter<string?>
+{
+    public override string? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType == JsonTokenType.String)
+        {
+            return reader.GetString();
+        }
+        
+        if (reader.TokenType == JsonTokenType.StartObject)
+        {
+            string? displayName = null;
+            while (reader.Read())
+            {
+                if (reader.TokenType == JsonTokenType.EndObject)
+                    break;
+                    
+                if (reader.TokenType == JsonTokenType.PropertyName)
+                {
+                    var propertyName = reader.GetString();
+                    reader.Read();
+                    
+                    if (propertyName == "display" && reader.TokenType == JsonTokenType.String)
+                    {
+                        displayName = reader.GetString();
+                    }
+                    else
+                    {
+                        reader.Skip();
+                    }
+                }
+            }
+            return displayName;
+        }
+        
+        if (reader.TokenType == JsonTokenType.Null)
+        {
+            return null;
+        }
+        
+        reader.Skip();
+        return null;
+    }
+
+    public override void Write(Utf8JsonWriter writer, string? value, JsonSerializerOptions options)
+    {
+        if (value == null)
+            writer.WriteNullValue();
+        else
+            writer.WriteStringValue(value);
+    }
 }
 
 public class QobuzImage

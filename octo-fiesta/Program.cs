@@ -67,11 +67,12 @@ if (musicService == MusicService.Qobuz)
 }
 else if (musicService == MusicService.SquidWTF)
 {
-    // If playlists enabled, register Deezer FIRST (secondary provider)
-    if (enableExternalPlaylists)
+    var squidWtfSource = builder.Configuration.GetValue<string>("SquidWTF:Source") ?? "Qobuz";
+    var isTidalSource = squidWtfSource.Equals("Tidal", StringComparison.OrdinalIgnoreCase);
+    
+    // Only enable playlists for Tidal source (Qobuz doesn't support playlists via SquidWTF)
+    if (enableExternalPlaylists && isTidalSource)
     {
-        builder.Services.AddSingleton<IMusicMetadataService, DeezerMetadataService>();
-        builder.Services.AddSingleton<IDownloadService, DeezerDownloadService>();
         builder.Services.AddSingleton<PlaylistSyncService>();
     }
     
