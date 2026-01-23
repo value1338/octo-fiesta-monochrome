@@ -228,16 +228,46 @@ public class SquidWTFMetadataService : IMusicMetadataService
         }
     }
 
-    public Task<ExternalPlaylist?> GetPlaylistAsync(string externalProvider, string externalId)
+    public async Task<ExternalPlaylist?> GetPlaylistAsync(string externalProvider, string externalId)
     {
-        // Not implemented for SquidWTF
-        return Task.FromResult<ExternalPlaylist?>(null);
+        if (externalProvider != "squidwtf") return null;
+        
+        try
+        {
+            // Only Tidal supports playlist fetching
+            if (!IsQobuzSource)
+            {
+                return await GetPlaylistTidalAsync(externalId);
+            }
+            
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get playlist: {ExternalId}", externalId);
+            return null;
+        }
     }
 
-    public Task<List<Song>> GetPlaylistTracksAsync(string externalProvider, string externalId)
+    public async Task<List<Song>> GetPlaylistTracksAsync(string externalProvider, string externalId)
     {
-        // Not implemented for SquidWTF
-        return Task.FromResult(new List<Song>());
+        if (externalProvider != "squidwtf") return new List<Song>();
+        
+        try
+        {
+            // Only Tidal supports playlist tracks
+            if (!IsQobuzSource)
+            {
+                return await GetPlaylistTracksTidalAsync(externalId);
+            }
+            
+            return new List<Song>();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get playlist tracks: {ExternalId}", externalId);
+            return new List<Song>();
+        }
     }
 
     #endregion
@@ -410,11 +440,11 @@ public class SquidWTFMetadataService : IMusicMetadataService
         
         if (response == null) return new List<Song>();
         
-        var searchResponse = JsonSerializer.Deserialize<TidalSearchResponse>(response);
-        if (searchResponse?.Tracks == null) return new List<Song>();
+        var dataResponse = JsonSerializer.Deserialize<TidalDataResponse<TidalTrack>>(response);
+        if (dataResponse?.Data?.Items == null) return new List<Song>();
         
         var songs = new List<Song>();
-        foreach (var track in searchResponse.Tracks.Take(limit))
+        foreach (var track in dataResponse.Data.Items.Take(limit))
         {
             var song = MapTidalTrackToSong(track);
             if (ShouldIncludeSong(song))
@@ -433,10 +463,10 @@ public class SquidWTFMetadataService : IMusicMetadataService
         
         if (response == null) return new List<Album>();
         
-        var searchResponse = JsonSerializer.Deserialize<TidalSearchResponse>(response);
-        if (searchResponse?.Albums == null) return new List<Album>();
+        var dataResponse = JsonSerializer.Deserialize<TidalNestedSearchResponse>(response);
+        if (dataResponse?.Data?.Albums?.Items == null) return new List<Album>();
         
-        return searchResponse.Albums
+        return dataResponse.Data.Albums.Items
             .Take(limit)
             .Select(MapTidalAlbumToAlbum)
             .ToList();
@@ -449,10 +479,10 @@ public class SquidWTFMetadataService : IMusicMetadataService
         
         if (response == null) return new List<Artist>();
         
-        var searchResponse = JsonSerializer.Deserialize<TidalSearchResponse>(response);
-        if (searchResponse?.Artists == null) return new List<Artist>();
+        var dataResponse = JsonSerializer.Deserialize<TidalNestedSearchResponse>(response);
+        if (dataResponse?.Data?.Artists?.Items == null) return new List<Artist>();
         
-        return searchResponse.Artists
+        return dataResponse.Data.Artists.Items
             .Take(limit)
             .Select(MapTidalArtistToArtist)
             .ToList();
@@ -463,15 +493,38 @@ public class SquidWTFMetadataService : IMusicMetadataService
         var url = $"{TidalBaseUrl}/search/?p={Uri.EscapeDataString(query)}";
         var response = await SendTidalRequestAsync(url);
         
-        if (response == null) return new List<ExternalPlaylist>();
+        if (response == null)
+        {
+            _logger.LogWarning("Tidal playlist search returned null response for query: {Query}", query);
+            return new List<ExternalPlaylist>();
+        }
         
-        var searchResponse = JsonSerializer.Deserialize<TidalSearchResponse>(response);
-        if (searchResponse?.Playlists == null) return new List<ExternalPlaylist>();
+        _logger.LogDebug("Tidal playlist search response length: {Length} for query: {Query}", response.Length, query);
         
-        return searchResponse.Playlists
-            .Take(limit)
-            .Select(MapTidalPlaylistToExternalPlaylist)
-            .ToList();
+        try
+        {
+            var dataResponse = JsonSerializer.Deserialize<TidalNestedSearchResponse>(response);
+            
+            if (dataResponse?.Data?.Playlists?.Items == null)
+            {
+                _logger.LogWarning("Tidal playlist search - parsed but no playlists found. Data null: {DataNull}, Playlists null: {PlaylistsNull}", 
+                    dataResponse?.Data == null, dataResponse?.Data?.Playlists == null);
+                return new List<ExternalPlaylist>();
+            }
+            
+            _logger.LogInformation("Tidal playlist search found {Count} playlists for query: {Query}", 
+                dataResponse.Data.Playlists.Items.Count, query);
+            
+            return dataResponse.Data.Playlists.Items
+                .Take(limit)
+                .Select(MapTidalPlaylistToExternalPlaylist)
+                .ToList();
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "Failed to deserialize Tidal playlist response for query: {Query}", query);
+            return new List<ExternalPlaylist>();
+        }
     }
 
     private async Task<Song?> GetSongTidalAsync(string trackId)
@@ -481,40 +534,48 @@ public class SquidWTFMetadataService : IMusicMetadataService
         
         if (response == null) return null;
         
-        var trackInfo = JsonSerializer.Deserialize<TidalTrackInfoResponse>(response);
-        if (trackInfo == null) return null;
+        var trackInfoWrapper = JsonSerializer.Deserialize<TidalTrackInfoResponseWrapper>(response);
+        if (trackInfoWrapper?.Data == null) return null;
         
-        return MapTidalTrackInfoToSong(trackInfo);
+        return MapTidalTrackInfoToSong(trackInfoWrapper.Data);
     }
 
     private async Task<Album?> GetAlbumTidalAsync(string albumId)
     {
-        // Tidal search by album ID - search for the album and get details
-        var url = $"{TidalBaseUrl}/search/?al={albumId}";
+        // Use dedicated /album/ endpoint for fetching album by ID
+        var url = $"{TidalBaseUrl}/album/?id={albumId}";
         var response = await SendTidalRequestAsync(url);
         
         if (response == null) return null;
         
-        var searchResponse = JsonSerializer.Deserialize<TidalSearchResponse>(response);
-        var albumData = searchResponse?.Albums?.FirstOrDefault(a => a.Id.ToString() == albumId);
+        var albumResponse = JsonSerializer.Deserialize<TidalAlbumResponse>(response);
+        var albumData = albumResponse?.Data;
         
         if (albumData == null) return null;
         
-        var album = MapTidalAlbumToAlbum(albumData);
+        var album = MapTidalAlbumDataToAlbum(albumData);
         
-        // Add tracks if available
-        if (albumData.Tracks != null)
+        // Add tracks from items
+        if (albumData.Items != null)
         {
-            foreach (var track in albumData.Tracks)
+            foreach (var item in albumData.Items)
             {
-                var song = MapTidalTrackToSong(track);
-                song.Album = album.Title;
-                song.AlbumId = album.Id;
-                song.AlbumArtist = album.Artist;
-                
-                if (ShouldIncludeSong(song))
+                if (item.Type == "track" && item.Item != null)
                 {
-                    album.Songs.Add(song);
+                    var song = MapTidalTrackToSong(item.Item);
+                    song.Album = album.Title;
+                    song.AlbumId = album.Id;
+                    song.AlbumArtist = album.Artist;
+                    // Use album cover for tracks if track doesn't have one
+                    if (string.IsNullOrEmpty(song.CoverArtUrl))
+                    {
+                        song.CoverArtUrl = album.CoverArtUrl;
+                    }
+                    
+                    if (ShouldIncludeSong(song))
+                    {
+                        album.Songs.Add(song);
+                    }
                 }
             }
         }
@@ -524,24 +585,117 @@ public class SquidWTFMetadataService : IMusicMetadataService
 
     private async Task<Artist?> GetArtistTidalAsync(string artistId)
     {
-        var url = $"{TidalBaseUrl}/search/?a={artistId}";
+        // Use dedicated /artist/ endpoint for fetching artist by ID
+        var url = $"{TidalBaseUrl}/artist/?id={artistId}";
         var response = await SendTidalRequestAsync(url);
         
         if (response == null) return null;
         
-        var searchResponse = JsonSerializer.Deserialize<TidalSearchResponse>(response);
-        var artistData = searchResponse?.Artists?.FirstOrDefault(a => a.Id.ToString() == artistId);
+        var artistResponse = JsonSerializer.Deserialize<TidalArtistResponse>(response);
         
-        if (artistData == null) return null;
+        if (artistResponse?.Artist == null) return null;
         
-        return MapTidalArtistToArtist(artistData);
+        return MapTidalArtistDataToArtist(artistResponse);
     }
 
-    private Task<List<Album>> GetArtistAlbumsTidalAsync(string artistId)
+    private async Task<List<Album>> GetArtistAlbumsTidalAsync(string artistId)
     {
-        // Tidal doesn't have a direct artist albums endpoint via SquidWTF
-        // Return empty list for now
-        return Task.FromResult(new List<Album>());
+        // Search for albums by artist name to get their discography
+        // First get the artist to get their name
+        var artist = await GetArtistTidalAsync(artistId);
+        if (artist == null) return new List<Album>();
+        
+        // Search for albums by artist name
+        var url = $"{TidalBaseUrl}/search/?al={Uri.EscapeDataString(artist.Name)}";
+        var response = await SendTidalRequestAsync(url);
+        
+        if (response == null) return new List<Album>();
+        
+        var dataResponse = JsonSerializer.Deserialize<TidalNestedSearchResponse>(response);
+        if (dataResponse?.Data?.Albums?.Items == null) return new List<Album>();
+        
+        // Filter albums that have this artist as main artist
+        return dataResponse.Data.Albums.Items
+            .Where(a => a.Artists?.Any(ar => ar.Id.ToString() == artistId) == true ||
+                       a.Artist?.Id.ToString() == artistId)
+            .Select(MapTidalAlbumToAlbum)
+            .ToList();
+    }
+
+    private async Task<ExternalPlaylist?> GetPlaylistTidalAsync(string playlistUuid)
+    {
+        var url = $"{TidalBaseUrl}/playlist/?id={playlistUuid}";
+        var response = await SendTidalRequestAsync(url);
+        
+        if (response == null)
+        {
+            _logger.LogWarning("Tidal playlist fetch returned null for UUID: {PlaylistUuid}", playlistUuid);
+            return null;
+        }
+        
+        try
+        {
+            var playlistResponse = JsonSerializer.Deserialize<TidalPlaylistResponse>(response);
+            
+            if (playlistResponse?.Playlist == null)
+            {
+                _logger.LogWarning("Tidal playlist response has no playlist data for UUID: {PlaylistUuid}", playlistUuid);
+                return null;
+            }
+            
+            return MapTidalPlaylistToExternalPlaylist(playlistResponse.Playlist);
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "Failed to deserialize Tidal playlist response for UUID: {PlaylistUuid}", playlistUuid);
+            return null;
+        }
+    }
+
+    private async Task<List<Song>> GetPlaylistTracksTidalAsync(string playlistUuid)
+    {
+        var url = $"{TidalBaseUrl}/playlist/?id={playlistUuid}";
+        var response = await SendTidalRequestAsync(url);
+        
+        if (response == null)
+        {
+            _logger.LogWarning("Tidal playlist tracks fetch returned null for UUID: {PlaylistUuid}", playlistUuid);
+            return new List<Song>();
+        }
+        
+        try
+        {
+            var playlistResponse = JsonSerializer.Deserialize<TidalPlaylistResponse>(response);
+            
+            if (playlistResponse?.Items == null)
+            {
+                _logger.LogWarning("Tidal playlist response has no items for UUID: {PlaylistUuid}", playlistUuid);
+                return new List<Song>();
+            }
+            
+            _logger.LogInformation("Tidal playlist has {Count} items for UUID: {PlaylistUuid}", 
+                playlistResponse.Items.Count, playlistUuid);
+            
+            var songs = new List<Song>();
+            foreach (var item in playlistResponse.Items)
+            {
+                if (item.Type == "track" && item.Item != null)
+                {
+                    var song = MapTidalTrackToSong(item.Item);
+                    if (ShouldIncludeSong(song))
+                    {
+                        songs.Add(song);
+                    }
+                }
+            }
+            
+            return songs;
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "Failed to deserialize Tidal playlist tracks response for UUID: {PlaylistUuid}", playlistUuid);
+            return new List<Song>();
+        }
     }
 
     private async Task<string?> SendTidalRequestAsync(string url)
@@ -733,6 +887,63 @@ public class SquidWTFMetadataService : IMusicMetadataService
         };
     }
 
+    /// <summary>
+    /// Maps TidalAlbumData (from /album/ endpoint) to Album domain model
+    /// </summary>
+    private Album MapTidalAlbumDataToAlbum(TidalAlbumData albumData)
+    {
+        var externalId = albumData.Id.ToString();
+        
+        int? year = null;
+        if (!string.IsNullOrEmpty(albumData.ReleaseDate) && albumData.ReleaseDate.Length >= 4)
+        {
+            if (int.TryParse(albumData.ReleaseDate.Substring(0, 4), out var y))
+            {
+                year = y;
+            }
+        }
+        
+        return new Album
+        {
+            Id = $"ext-squidwtf-album-{externalId}",
+            Title = albumData.Title ?? "",
+            Artist = albumData.Artist?.Name ?? (albumData.Artists?.FirstOrDefault()?.Name ?? ""),
+            ArtistId = albumData.Artist != null ? $"ext-squidwtf-artist-{albumData.Artist.Id}" : null,
+            Year = year,
+            SongCount = albumData.NumberOfTracks,
+            CoverArtUrl = GetTidalCoverUrl(albumData.Cover, "320x320"),
+            IsLocal = false,
+            ExternalProvider = "squidwtf",
+            ExternalId = externalId
+        };
+    }
+
+    /// <summary>
+    /// Maps TidalArtistResponse (from /artist/ endpoint) to Artist domain model
+    /// </summary>
+    private Artist MapTidalArtistDataToArtist(TidalArtistResponse artistResponse)
+    {
+        var artistData = artistResponse.Artist!;
+        var externalId = artistData.Id.ToString();
+        
+        // Use the cover URL from the response if available, otherwise build from picture ID
+        string? imageUrl = artistResponse.Cover?.Image750;
+        if (string.IsNullOrEmpty(imageUrl))
+        {
+            imageUrl = GetTidalImageUrl(artistData.Picture);
+        }
+        
+        return new Artist
+        {
+            Id = $"ext-squidwtf-artist-{externalId}",
+            Name = artistData.Name ?? "",
+            ImageUrl = imageUrl,
+            IsLocal = false,
+            ExternalProvider = "squidwtf",
+            ExternalId = externalId
+        };
+    }
+
     private ExternalPlaylist MapTidalPlaylistToExternalPlaylist(TidalPlaylist playlist)
     {
         return new ExternalPlaylist
@@ -744,7 +955,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
             ExternalId = playlist.Uuid ?? "",
             TrackCount = playlist.NumberOfTracks,
             Duration = playlist.Duration,
-            CoverUrl = playlist.Image
+            CoverUrl = GetTidalCoverUrl(playlist.SquareImage ?? playlist.Image, "320x320")
         };
     }
 

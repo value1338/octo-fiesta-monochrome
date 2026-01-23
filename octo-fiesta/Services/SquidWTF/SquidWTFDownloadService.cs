@@ -213,7 +213,8 @@ public class SquidWTFDownloadService : BaseDownloadService
         response.EnsureSuccessStatusCode();
         
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
-        var trackResponse = JsonSerializer.Deserialize<TidalTrackResponse>(json);
+        var wrapper = JsonSerializer.Deserialize<TidalTrackDownloadResponseWrapper>(json);
+        var trackResponse = wrapper?.Data;
         
         if (string.IsNullOrEmpty(trackResponse?.Manifest))
         {
