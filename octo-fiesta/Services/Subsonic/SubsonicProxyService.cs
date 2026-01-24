@@ -97,12 +97,17 @@ public class SubsonicProxyService
         // Forward body for POST/PUT/PATCH
         if (incomingRequest.Method != "GET" && incomingRequest.Method != "HEAD")
         {
-            incomingRequest.EnableBuffering();
-            incomingRequest.Body.Position = 0;
+            // Reset position to read the buffered body from the beginning
+            if (incomingRequest.Body.CanSeek)
+            {
+                incomingRequest.Body.Position = 0;
+            }
             
-            using var reader = new StreamReader(incomingRequest.Body, leaveOpen: true);
-            var bodyContent = await reader.ReadToEndAsync(cancellationToken);
-            incomingRequest.Body.Position = 0;
+            string bodyContent;
+            using (var reader = new StreamReader(incomingRequest.Body, leaveOpen: true))
+            {
+                bodyContent = await reader.ReadToEndAsync(cancellationToken);
+            }
             
             if (!string.IsNullOrEmpty(bodyContent))
             {

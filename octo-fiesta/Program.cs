@@ -122,6 +122,9 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
+// Enable request body buffering FIRST to allow multiple reads (for proxy forwarding)
+app.UseRequestBodyBuffering();
+
 app.UseExceptionHandler(_ => { }); // Global exception handler
 
 if (app.Environment.IsDevelopment())
