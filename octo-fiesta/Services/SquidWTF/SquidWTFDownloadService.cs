@@ -202,28 +202,8 @@ public class SquidWTFDownloadService : BaseDownloadService
 
     private async Task<DownloadResult> DownloadTrackTidalAsync(string trackId, Song song, CancellationToken cancellationToken)
     {
-        // Get download manifest
-        var quality = GetTidalQuality();
-        var url = $"{TidalBaseUrl}/track/?id={trackId}&quality={quality}";
-        
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.Add(TidalClientHeader, TidalClientValue);
-        
-        var response = await _httpClient.SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
-        
-        var json = await response.Content.ReadAsStringAsync(cancellationToken);
-        var wrapper = JsonSerializer.Deserialize<TidalTrackDownloadResponseWrapper>(json);
-        var trackResponse = wrapper?.Data;
-        
-        if (string.IsNullOrEmpty(trackResponse?.Manifest))
-        {
-            throw new Exception("Failed to get manifest from SquidWTF Tidal");
-        }
-        
-        // Decode the base64 manifest
-        var manifestJson = Encoding.UTF8.GetString(Convert.FromBase64String(trackResponse.Manifest));
-        var manifest = JsonSerializer.Deserialize<TidalManifest>(manifestJson);
+        var requestedQuality = GetTidalQuality();
+        var (manifest, actualQuality) = await GetTidalManifestAsync(trackId, requestedQuality, cancellationToken);
         
         if (manifest?.Urls == null || manifest.Urls.Count == 0)
         {
@@ -231,11 +211,11 @@ public class SquidWTFDownloadService : BaseDownloadService
         }
         
         var downloadUrl = manifest.Urls[0];
-        Logger.LogInformation("Got download URL for track {TrackId}: {Title}", trackId, song.Title);
+        Logger.LogInformation("Got download URL for track {TrackId}: {Title} (quality: {Quality})", trackId, song.Title, actualQuality);
         
-        // Determine file extension based on manifest mime type or quality
-        var extension = manifest.MimeType?.Contains("flac") == true ? ".flac" : ".mp3";
-        var downloadedQuality = quality == "HI_RES_LOSSLESS" ? "FLAC_24" : "FLAC_16";
+        // Determine file extension based on manifest mime type
+        var extension = GetExtensionFromMimeType(manifest.MimeType);
+        var downloadedQuality = GetDownloadedQuality(actualQuality, manifest.MimeType);
         
         // Build output path
         var artistForPath = song.AlbumArtist ?? song.Artist;
@@ -256,6 +236,48 @@ public class SquidWTFDownloadService : BaseDownloadService
         await WriteMetadataAsync(outputPath, song, cancellationToken);
         
         return new DownloadResult(outputPath, downloadedQuality);
+    }
+
+    /// <summary>
+    /// Gets the Tidal manifest, falling back to LOSSLESS if HI_RES_LOSSLESS returns DASH format
+    /// </summary>
+    private async Task<(TidalManifest? manifest, string quality)> GetTidalManifestAsync(
+        string trackId, string quality, CancellationToken cancellationToken)
+    {
+        var url = $"{TidalBaseUrl}/track/?id={trackId}&quality={quality}";
+        
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Add(TidalClientHeader, TidalClientValue);
+        
+        var response = await _httpClient.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        var wrapper = JsonSerializer.Deserialize<TidalTrackDownloadResponseWrapper>(json);
+        var trackResponse = wrapper?.Data;
+        
+        if (string.IsNullOrEmpty(trackResponse?.Manifest))
+        {
+            throw new Exception("Failed to get manifest from SquidWTF Tidal");
+        }
+        
+        // Check if manifest is DASH (XML) format - not supported, need to fallback to LOSSLESS
+        var manifestMimeType = trackResponse.ManifestMimeType ?? "";
+        if (manifestMimeType.Contains("dash+xml") || manifestMimeType.Contains("application/dash"))
+        {
+            if (quality == "HI_RES_LOSSLESS")
+            {
+                Logger.LogWarning("HI_RES_LOSSLESS returned DASH format for track {TrackId}, falling back to LOSSLESS", trackId);
+                return await GetTidalManifestAsync(trackId, "LOSSLESS", cancellationToken);
+            }
+            throw new Exception($"Unsupported manifest format: {manifestMimeType}");
+        }
+        
+        // Decode the base64 manifest (JSON format)
+        var manifestJson = Encoding.UTF8.GetString(Convert.FromBase64String(trackResponse.Manifest));
+        var manifest = JsonSerializer.Deserialize<TidalManifest>(manifestJson);
+        
+        return (manifest, quality);
     }
 
     private string GetTidalQuality()
@@ -279,6 +301,43 @@ public class SquidWTFDownloadService : BaseDownloadService
     #endregion
 
     #region Helpers
+
+    /// <summary>
+    /// Determines file extension based on the manifest's mime type
+    /// </summary>
+    private static string GetExtensionFromMimeType(string? mimeType)
+    {
+        if (string.IsNullOrEmpty(mimeType))
+            return ".mp3";
+            
+        return mimeType.ToLowerInvariant() switch
+        {
+            var m when m.Contains("flac") => ".flac",
+            var m when m.Contains("mp4") || m.Contains("m4a") || m.Contains("aac") => ".m4a",
+            var m when m.Contains("mp3") || m.Contains("mpeg") => ".mp3",
+            _ => ".mp3"
+        };
+    }
+
+    /// <summary>
+    /// Determines the quality string for the downloaded file
+    /// </summary>
+    private static string GetDownloadedQuality(string requestedQuality, string? mimeType)
+    {
+        if (mimeType?.Contains("flac", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return requestedQuality == "HI_RES_LOSSLESS" ? "FLAC_24" : "FLAC_16";
+        }
+        
+        // AAC/M4A from Tidal is typically 256kbps
+        if (mimeType?.Contains("mp4", StringComparison.OrdinalIgnoreCase) == true ||
+            mimeType?.Contains("aac", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return "AAC_256";
+        }
+        
+        return "MP3_320";
+    }
 
     private async Task DownloadFileAsync(string url, string outputPath, CancellationToken cancellationToken)
     {
