@@ -66,14 +66,23 @@ public class StartupValidationOrchestrator : IHostedService
     private static string GetVersion()
     {
         var assembly = Assembly.GetExecutingAssembly();
-        var version = assembly.GetName().Version;
         
+        // Try to get the informational version first (includes pre-release tags like -dev.5+g1a2b3c4)
+        var infoVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        if (!string.IsNullOrEmpty(infoVersion))
+        {
+            // Remove the +commitHash suffix added by SourceLink if present (e.g., "0.1.0-dev+abc123def")
+            var plusIndex = infoVersion.IndexOf('+');
+            return plusIndex > 0 ? infoVersion[..plusIndex] : infoVersion;
+        }
+        
+        // Fallback to assembly version
+        var version = assembly.GetName().Version;
         if (version is null)
         {
             return "unknown";
         }
 
-        // Return major.minor.patch format
         return $"{version.Major}.{version.Minor}.{version.Build}";
     }
 

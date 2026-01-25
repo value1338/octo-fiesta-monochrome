@@ -5,7 +5,7 @@
         <Nullable>enable</Nullable>
         <ImplicitUsings>enable</ImplicitUsings>
         <RootNamespace>octo_fiesta</RootNamespace>
-        <Version>0.3.0</Version>
+        <Version>0.0.0-dev</Version>
     </PropertyGroup>
 
     <ItemGroup>
