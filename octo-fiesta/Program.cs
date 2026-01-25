@@ -33,9 +33,11 @@ builder.Services.Configure<QobuzSettings>(
 builder.Services.Configure<SquidWTFSettings>(
     builder.Configuration.GetSection("SquidWTF"));
 
-// Get the configured music service
-var musicService = builder.Configuration.GetValue<MusicService>("Subsonic:MusicService");
-var enableExternalPlaylists = builder.Configuration.GetValue<bool>("Subsonic:EnableExternalPlaylists", true);
+// Get the configured music service from bound settings (to respect default values)
+var subsonicSettings = new SubsonicSettings();
+builder.Configuration.GetSection("Subsonic").Bind(subsonicSettings);
+var musicService = subsonicSettings.MusicService;
+var enableExternalPlaylists = subsonicSettings.EnableExternalPlaylists;
 
 // Business services
 // Registered as Singleton to share state (mappings cache, scan debounce, download tracking, rate limiting)
