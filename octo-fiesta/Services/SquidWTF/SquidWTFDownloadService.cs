@@ -31,7 +31,7 @@ public class SquidWTFDownloadService : BaseDownloadService
     private const string TidalClientValue = "BiniLossless/v3.4";
     
     // Quality mappings
-    // Qobuz: 27 = FLAC (24-bit), 7 = FLAC (16-bit), 6 = MP3 320, 5 = MP3 128
+    // Qobuz: 27 = FLAC 24-bit/192kHz, 7 = FLAC 24-bit/96kHz, 6 = FLAC 16-bit/44kHz, 5 = MP3 320kbps
     // Tidal: HI_RES_LOSSLESS, LOSSLESS
     
     private bool IsQobuzSource => _squidWTFSettings.Source.Equals("Qobuz", StringComparison.OrdinalIgnoreCase);
@@ -145,13 +145,14 @@ public class SquidWTFDownloadService : BaseDownloadService
         Logger.LogInformation("Got download URL for track {TrackId}: {Title}", trackId, song.Title);
         
         // Determine file extension based on quality
-        var extension = quality == "27" || quality == "7" ? ".flac" : ".mp3";
+        // Qobuz: 27/7/6 = FLAC, 5 = MP3
+        var extension = quality == "5" ? ".mp3" : ".flac";
         var downloadedQuality = quality switch
         {
-            "27" => "FLAC_24",
-            "7" => "FLAC_16",
-            "6" => "MP3_320",
-            "5" => "MP3_128",
+            "27" => "FLAC_24_192",
+            "7" => "FLAC_24_96",
+            "6" => "FLAC_16",
+            "5" => "MP3_320",
             _ => "FLAC"
         };
         
@@ -182,16 +183,17 @@ public class SquidWTFDownloadService : BaseDownloadService
         
         if (string.IsNullOrEmpty(quality))
         {
-            return "27"; // Default to highest quality FLAC
+            return "27"; // Default to highest quality FLAC (24-bit/192kHz)
         }
         
         // Map common quality names to Qobuz quality codes
+        // 27 = FLAC 24-bit/192kHz, 7 = FLAC 24-bit/96kHz, 6 = FLAC 16-bit/44kHz, 5 = MP3 320kbps
         return quality.ToUpperInvariant() switch
         {
-            "FLAC" or "FLAC_24" or "27" => "27",
-            "FLAC_16" or "7" => "7",
-            "MP3_320" or "6" => "6",
-            "MP3_128" or "5" => "5",
+            "FLAC_24_192" or "FLAC_24" or "27" => "27",
+            "FLAC_24_96" or "7" => "7",
+            "FLAC_16" or "FLAC" or "6" => "6",
+            "MP3_320" or "MP3" or "5" => "5",
             _ => "27"
         };
     }
