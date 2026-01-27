@@ -729,6 +729,30 @@ public class SquidWTFMetadataService : IMusicMetadataService
     {
         var externalId = track.Id.ToString();
         
+        // Parse year from release date
+        int? year = null;
+        var releaseDate = track.ReleaseDateOriginal ?? track.Album?.ReleaseDateOriginal;
+        if (!string.IsNullOrEmpty(releaseDate) && releaseDate.Length >= 4)
+        {
+            if (int.TryParse(releaseDate.Substring(0, 4), out var y))
+            {
+                year = y;
+            }
+        }
+        // Fallback to album released_at timestamp
+        if (year == null && track.Album?.ReleasedAt.HasValue == true)
+        {
+            var dateTime = DateTimeOffset.FromUnixTimeSeconds(track.Album.ReleasedAt.Value).DateTime;
+            year = dateTime.Year;
+        }
+        
+        // Get composers from composer field
+        var contributors = new List<string>();
+        if (track.Composer != null && !string.IsNullOrEmpty(track.Composer.Name))
+        {
+            contributors.Add(track.Composer.Name);
+        }
+        
         return new Song
         {
             Id = $"ext-squidwtf-song-{externalId}",
@@ -739,6 +763,13 @@ public class SquidWTFMetadataService : IMusicMetadataService
             AlbumId = track.Album != null ? $"ext-squidwtf-album-{track.Album.Id}" : null,
             Duration = track.Duration,
             Track = track.TrackNumber,
+            DiscNumber = track.MediaNumber > 0 ? track.MediaNumber : null,
+            Year = year,
+            Genre = track.Album?.Genre?.Name,
+            Isrc = track.Isrc,
+            Copyright = track.Copyright ?? track.Album?.Copyright,
+            Contributors = contributors,
+            TotalTracks = track.Album?.TracksCount,
             CoverArtUrl = track.Album?.Image?.Thumbnail ?? track.Album?.Image?.Small,
             CoverArtUrlLarge = track.Album?.Image?.Large,
             IsLocal = false,
@@ -799,6 +830,16 @@ public class SquidWTFMetadataService : IMusicMetadataService
     {
         var externalId = track.Id.ToString();
         
+        // Parse year from album release date
+        int? year = null;
+        if (!string.IsNullOrEmpty(track.Album?.ReleaseDate) && track.Album.ReleaseDate.Length >= 4)
+        {
+            if (int.TryParse(track.Album.ReleaseDate.Substring(0, 4), out var y))
+            {
+                year = y;
+            }
+        }
+        
         return new Song
         {
             Id = $"ext-squidwtf-song-{externalId}",
@@ -810,6 +851,11 @@ public class SquidWTFMetadataService : IMusicMetadataService
             Duration = track.Duration,
             Track = track.TrackNumber,
             DiscNumber = track.VolumeNumber,
+            Year = year,
+            Isrc = track.Isrc,
+            Bpm = track.Bpm,
+            Copyright = track.Copyright,
+            TotalTracks = track.Album?.NumberOfTracks,
             CoverArtUrl = GetTidalCoverUrl(track.Album?.Cover, "320x320"),
             CoverArtUrlLarge = GetTidalCoverUrl(track.Album?.Cover, "1280x1280"),
             IsLocal = false,
@@ -823,6 +869,16 @@ public class SquidWTFMetadataService : IMusicMetadataService
     {
         var externalId = track.Id.ToString();
         
+        // Parse year from album release date
+        int? year = null;
+        if (!string.IsNullOrEmpty(track.Album?.ReleaseDate) && track.Album.ReleaseDate.Length >= 4)
+        {
+            if (int.TryParse(track.Album.ReleaseDate.Substring(0, 4), out var y))
+            {
+                year = y;
+            }
+        }
+        
         return new Song
         {
             Id = $"ext-squidwtf-song-{externalId}",
@@ -834,7 +890,11 @@ public class SquidWTFMetadataService : IMusicMetadataService
             Duration = track.Duration,
             Track = track.TrackNumber,
             DiscNumber = track.VolumeNumber,
+            Year = year,
             Isrc = track.Isrc,
+            Bpm = track.Bpm,
+            Copyright = track.Copyright,
+            TotalTracks = track.Album?.NumberOfTracks,
             CoverArtUrl = GetTidalCoverUrl(track.Album?.Cover, "320x320"),
             CoverArtUrlLarge = GetTidalCoverUrl(track.Album?.Cover, "1280x1280"),
             IsLocal = false,
