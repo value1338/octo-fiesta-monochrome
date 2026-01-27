@@ -287,6 +287,7 @@ public class DeezerDownloadService : BaseDownloadService
                 };
 
                 var mediaHttpRequest = new HttpRequestMessage(HttpMethod.Post, "https://media.deezer.com/v1/get_url");
+                mediaHttpRequest.Headers.Add("Cookie", $"arl={arl}");
                 mediaHttpRequest.Content = new StringContent(
                     JsonSerializer.Serialize(mediaRequest), 
                     Encoding.UTF8, 
