@@ -393,15 +393,21 @@ public class SquidWTFMetadataService : IMusicMetadataService
 
     private async Task<List<Album>> GetArtistAlbumsQobuzAsync(string artistId)
     {
-        var url = $"{QobuzBaseUrl}/api/get-artist?artist_id={artistId}";
+        var artist = await GetArtistQobuzAsync(artistId);
+        if (artist == null) return new List<Album>();
+        
+        // Search for albums by artist name (Qobuz get-artist doesn't return albums list)
+        var url = $"{QobuzBaseUrl}/api/get-music?q={Uri.EscapeDataString(artist.Name)}&offset=0";
         var response = await SendQobuzRequestAsync(url);
         
         if (response == null) return new List<Album>();
         
-        var artistResponse = JsonSerializer.Deserialize<QobuzArtistResponse>(response);
-        if (artistResponse?.Data?.Albums?.Items == null) return new List<Album>();
+        var searchResponse = JsonSerializer.Deserialize<QobuzSearchResponse>(response);
+        if (searchResponse?.Data?.Albums?.Items == null) return new List<Album>();
         
-        return artistResponse.Data.Albums.Items
+        // Filter albums that have this artist as main artist
+        return searchResponse.Data.Albums.Items
+            .Where(a => a.Artist?.Id.ToString() == artistId)
             .Select(MapQobuzAlbumToAlbum)
             .ToList();
     }
@@ -798,7 +804,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
             ArtistId = album.Artist != null ? $"ext-squidwtf-artist-{album.Artist.Id}" : null,
             Year = year,
             SongCount = album.TracksCount,
-            CoverArtUrl = album.Image?.Thumbnail ?? album.Image?.Small,
+            CoverArtUrl = album.Image?.Small ?? album.Image?.Thumbnail,
             Genre = album.Genre?.Name,
             IsLocal = false,
             ExternalProvider = "squidwtf",
