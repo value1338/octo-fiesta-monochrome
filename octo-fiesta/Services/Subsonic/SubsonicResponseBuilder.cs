@@ -271,6 +271,8 @@ public class SubsonicResponseBuilder
     /// </summary>
     public Dictionary<string, object> ConvertSongToJson(Song song)
     {
+        var isSquid = !string.IsNullOrEmpty(song.ExternalProvider) && song.ExternalProvider.Equals("SquidWTF", System.StringComparison.OrdinalIgnoreCase);
+
         var result = new Dictionary<string, object>
         {
             ["id"] = song.Id,
@@ -285,14 +287,15 @@ public class SubsonicResponseBuilder
             ["track"] = song.Track ?? 0,
             ["year"] = song.Year ?? 0,
             ["coverArt"] = song.Id,
-            ["suffix"] = song.IsLocal ? "mp3" : "Remote",
-            ["contentType"] = "audio/mpeg",
+            ["suffix"] = isSquid ? "flac" : (song.IsLocal ? "mp3" : "Remote"),
+            ["contentType"] = isSquid ? "audio/flac" : "audio/mpeg",
             ["type"] = "music",
             ["isVideo"] = false,
             ["isExternal"] = !song.IsLocal
         };
-        
-        result["bitRate"] = song.IsLocal ? 128 : 0; // Default bitrate for local files
+
+        // Bitrate: high-quality for SquidWTF, default 128 for local files, 0 otherwise
+        result["bitRate"] = isSquid ? 1141 : (song.IsLocal ? 128 : 0);
         
         return result;
     }
@@ -335,6 +338,8 @@ public class SubsonicResponseBuilder
     /// </summary>
     public XElement ConvertSongToXml(Song song, XNamespace ns)
     {
+        var isSquid = !string.IsNullOrEmpty(song.ExternalProvider) && song.ExternalProvider.Equals("SquidWTF", System.StringComparison.OrdinalIgnoreCase);
+
         return new XElement(ns + "song",
             new XAttribute("id", song.Id),
             new XAttribute("title", song.Title),
@@ -344,6 +349,9 @@ public class SubsonicResponseBuilder
             new XAttribute("track", song.Track ?? 0),
             new XAttribute("year", song.Year ?? 0),
             new XAttribute("coverArt", song.Id),
+            new XAttribute("suffix", isSquid ? "flac" : (song.IsLocal ? "mp3" : "Remote")),
+            new XAttribute("contentType", isSquid ? "audio/flac" : "audio/mpeg"),
+            new XAttribute("bitRate", isSquid ? 1141 : (song.IsLocal ? 128 : 0)),
             new XAttribute("isExternal", (!song.IsLocal).ToString().ToLower())
         );
     }
