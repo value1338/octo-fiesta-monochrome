@@ -32,7 +32,7 @@ public class SubsonicResponseBuilder
                 new XElement(ns + elementName)
             )
         );
-        return new ContentResult { Content = doc.ToString(), ContentType = "application/xml" };
+        return new ContentResult { Content = doc.ToString(), ContentType = "application/xml; charset=utf-8" };
     }
 
     /// <summary>
@@ -61,7 +61,7 @@ public class SubsonicResponseBuilder
                 )
             )
         );
-        return new ContentResult { Content = doc.ToString(), ContentType = "application/xml" };
+        return new ContentResult { Content = doc.ToString(), ContentType = "application/xml; charset=utf-8" };
     }
 
     /// <summary>
@@ -87,7 +87,7 @@ public class SubsonicResponseBuilder
                 ConvertSongToXml(song, ns)
             )
         );
-        return new ContentResult { Content = doc.ToString(), ContentType = "application/xml" };
+        return new ContentResult { Content = doc.ToString(), ContentType = "application/xml; charset=utf-8" };
     }
 
     /// <summary>
@@ -129,14 +129,16 @@ public class SubsonicResponseBuilder
                     new XAttribute("id", album.Id),
                     new XAttribute("name", album.Title),
                     new XAttribute("artist", album.Artist ?? ""),
-                    new XAttribute("songCount", album.SongCount ?? 0),
+                    new XAttribute("artistId", album.ArtistId ?? string.Empty),
+                    new XAttribute("songCount", album.Songs?.Count ?? album.SongCount ?? 0),
+                    new XAttribute("duration", totalDuration),
                     new XAttribute("year", album.Year ?? 0),
                     new XAttribute("coverArt", album.Id),
-                    album.Songs.Select(s => ConvertSongToXml(s, ns))
+                    album.Songs.Select(s => ConvertSongToXml(s, ns, album.Id))
                 )
             )
         );
-        return new ContentResult { Content = doc.ToString(), ContentType = "application/xml" };
+        return new ContentResult { Content = doc.ToString(), ContentType = "application/xml; charset=utf-8" };
     }
     
     /// <summary>
@@ -174,7 +176,7 @@ public class SubsonicResponseBuilder
                     year = playlist.CreatedDate?.Year ?? 0,
                     genre = "Playlist",
                     isCompilation = false,
-                    created = playlist.CreatedDate?.ToString("yyyy-MM-ddTHH:mm:ss"),
+                    created = playlist.CreatedDate.HasValue ? playlist.CreatedDate.Value.ToUniversalTime().ToString("o") : null,
                     song = tracks.Select(s => ConvertSongToJson(s)).ToList()
                 }
             });
@@ -195,13 +197,13 @@ public class SubsonicResponseBuilder
         if (playlist.CreatedDate.HasValue)
         {
             albumElement.Add(new XAttribute("year", playlist.CreatedDate.Value.Year));
-            albumElement.Add(new XAttribute("created", playlist.CreatedDate.Value.ToString("yyyy-MM-ddTHH:mm:ss")));
+            albumElement.Add(new XAttribute("created", playlist.CreatedDate.Value.ToUniversalTime().ToString("o")));
         }
         
         // Add songs
         foreach (var song in tracks)
         {
-            albumElement.Add(ConvertSongToXml(song, ns));
+            albumElement.Add(ConvertSongToXml(song, ns, playlist.Id));
         }
         
         var doc = new XDocument(
@@ -211,7 +213,7 @@ public class SubsonicResponseBuilder
                 albumElement
             )
         );
-        return new ContentResult { Content = doc.ToString(), ContentType = "application/xml" };
+        return new ContentResult { Content = doc.ToString(), ContentType = "application/xml; charset=utf-8" };
     }
 
     /// <summary>
@@ -251,7 +253,7 @@ public class SubsonicResponseBuilder
                 )
             )
         );
-        return new ContentResult { Content = doc.ToString(), ContentType = "application/xml" };
+        return new ContentResult { Content = doc.ToString(), ContentType = "application/xml; charset=utf-8" };
     }
 
     /// <summary>
@@ -335,41 +337,101 @@ public class SubsonicResponseBuilder
 
     /// <summary>
     /// Converts a Song domain model to Subsonic XML format.
+    /// Includes attributes Amperfy expects: albumId/parent, artistId, size, created, suffix, contentType, bitRate.
     /// </summary>
-    public XElement ConvertSongToXml(Song song, XNamespace ns)
+    public XElement ConvertSongToXml(Song song, XNamespace ns, string? parentAlbumId = null)
     {
         var isSquid = !string.IsNullOrEmpty(song.ExternalProvider) && song.ExternalProvider.Equals("SquidWTF", System.StringComparison.OrdinalIgnoreCase);
 
-        return new XElement(ns + "song",
+        // albumId/parent prefer explicit Song.AlbumId, otherwise fall back to provided parentAlbumId
+        var albumId = song.AlbumId ?? parentAlbumId ?? string.Empty;
+
+        long size = 0;
+        string? created = null;
+        try
+        {
+            // If we have a local path, try to get file size & last write time
+            if (!string.IsNullOrEmpty(song.LocalPath) && System.IO.File.Exists(song.LocalPath))
+            {
+                var fi = new System.IO.FileInfo(song.LocalPath);
+                size = fi.Length;
+                created = fi.LastWriteTimeUtc.ToString("o");
+            }
+            else if (!string.IsNullOrEmpty(song.ReleaseDate))
+            {
+                if (System.DateTime.TryParse(song.ReleaseDate, out var dt))
+                {
+                    created = dt.ToUniversalTime().ToString("o");
+                }
+            }
+        }
+        catch {
+            // Best-effort: ignore filesystem errors
+        }
+
+        // Determine bit rate (kbps) and estimate size if missing
+        var bitRate = isSquid ? 1141 : (song.IsLocal ? 128 : 0);
+        if (size == 0 && (song.Duration ?? 0) > 0 && bitRate > 0)
+        {
+            // size (bytes) = bitRate (kbps) * 125 (bytes/sec per kbps) * duration (sec)
+            size = (long)bitRate * 125L * (song.Duration ?? 0);
+        }
+
+        var songElement = new XElement(ns + "song",
             new XAttribute("id", song.Id),
             new XAttribute("title", song.Title),
             new XAttribute("album", song.Album ?? ""),
+            new XAttribute("albumId", albumId),
+            new XAttribute("parent", albumId),
             new XAttribute("artist", song.Artist ?? ""),
+            new XAttribute("artistId", song.ArtistId ?? string.Empty),
             new XAttribute("duration", song.Duration ?? 0),
             new XAttribute("track", song.Track ?? 0),
             new XAttribute("year", song.Year ?? 0),
             new XAttribute("coverArt", song.Id),
             new XAttribute("suffix", isSquid ? "flac" : (song.IsLocal ? "mp3" : "Remote")),
             new XAttribute("contentType", isSquid ? "audio/flac" : "audio/mpeg"),
-            new XAttribute("bitRate", isSquid ? 1141 : (song.IsLocal ? 128 : 0)),
+            new XAttribute("type", "music"),
+            new XAttribute("isVideo", "false"),
+            new XAttribute("bitRate", bitRate),
+            new XAttribute("size", size),
+            new XAttribute("isDir", "false"),
             new XAttribute("isExternal", (!song.IsLocal).ToString().ToLower())
         );
+
+        if (!string.IsNullOrEmpty(created))
+        {
+            songElement.Add(new XAttribute("created", created));
+        }
+
+        return songElement;
     }
 
     /// <summary>
     /// Converts an Album domain model to Subsonic XML format.
+    /// Includes songCount (based on actual track list when available) and total duration.
     /// </summary>
     public XElement ConvertAlbumToXml(Album album, XNamespace ns)
     {
-        return new XElement(ns + "album",
+        var totalDuration = album.Songs?.Sum(s => s.Duration ?? 0) ?? 0;
+        var element = new XElement(ns + "album",
             new XAttribute("id", album.Id),
             new XAttribute("name", album.Title),
             new XAttribute("artist", album.Artist ?? ""),
-            new XAttribute("songCount", album.SongCount ?? 0),
+            new XAttribute("artistId", album.ArtistId ?? string.Empty),
+            new XAttribute("songCount", album.Songs?.Count ?? album.SongCount ?? 0),
+            new XAttribute("duration", totalDuration),
             new XAttribute("year", album.Year ?? 0),
             new XAttribute("coverArt", album.Id),
             new XAttribute("isExternal", (!album.IsLocal).ToString().ToLower())
         );
+
+        if (!string.IsNullOrEmpty(album.Genre))
+        {
+            element.Add(new XAttribute("genre", album.Genre));
+        }
+
+        return element;
     }
 
     /// <summary>
