@@ -19,8 +19,8 @@ public class SquidWTFStartupValidator : BaseStartupValidator
         : base(httpClient)
     {
         _settings = settings.Value;
-    }	
-	
+    }
+
     public override async Task<ValidationResult> ValidateAsync(CancellationToken cancellationToken)
     {
         Console.WriteLine();
