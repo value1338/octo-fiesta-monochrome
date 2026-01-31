@@ -112,10 +112,9 @@ public class PlaylistIdHelperTests
     }
 
     [Fact]
-    public void IsExternalPlaylist_WithTidalPlaylistId_ReturnsTrue()
+    public void IsExternalPlaylist_WithSquidWTFPlaylistId_ReturnsTrue()
     {
-        // Arrange
-        var id = "pl-tidal-12345678";
+        var id = "pl-squidwtf-12345678";
 
         // Act
         var result = PlaylistIdHelper.IsExternalPlaylist(id);
