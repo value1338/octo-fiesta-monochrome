@@ -115,7 +115,7 @@ public class SubsonicResponseBuilder
                     year = album.Year ?? 0,
                     genre = album.Genre ?? "",
                     isCompilation = false,
-                    song = album.Songs.Select(s => ConvertSongToJson(s)).ToList()
+                    song = (album.Songs ?? Enumerable.Empty<Song>()).Select(s => ConvertSongToJson(s)).ToList()
                 }
             });
         }
@@ -134,7 +134,7 @@ public class SubsonicResponseBuilder
                     new XAttribute("duration", totalDuration),
                     new XAttribute("year", album.Year ?? 0),
                     new XAttribute("coverArt", album.Id),
-                    album.Songs.Select(s => ConvertSongToXml(s, ns, album.Id))
+                    (album.Songs?.Select(s => ConvertSongToXml(s, ns, album.Id)) ?? Enumerable.Empty<XElement>())
                 )
             )
         );
@@ -275,6 +275,39 @@ public class SubsonicResponseBuilder
     {
         var (suffix, contentType, bitRate) = GetSuffixContentTypeAndBitrate(song);
 
+        long size = 0;
+        string? created = null;
+        try
+        {
+            if (!string.IsNullOrEmpty(song.LocalPath) && System.IO.File.Exists(song.LocalPath))
+            {
+                var fi = new System.IO.FileInfo(song.LocalPath);
+                size = fi.Length;
+                created = fi.LastWriteTimeUtc.ToString("o");
+            }
+            else if (!string.IsNullOrEmpty(song.ReleaseDate))
+            {
+                if (System.DateTime.TryParse(song.ReleaseDate, out var dt))
+                {
+                    created = dt.ToUniversalTime().ToString("o");
+                }
+            }
+        }
+        catch (System.IO.IOException)
+        {
+            // best effort: ignore file I/O errors when determining size/created
+        }
+        catch (System.UnauthorizedAccessException)
+        {
+            // best effort: ignore permission issues when determining size/created
+        }
+
+        if (size == 0 && (song.Duration ?? 0) > 0 && bitRate > 0)
+        {
+            // size (bytes) = bitRate (kbps) * 125 (bytes/sec per kbps) * duration (sec)
+            size = (long)bitRate * 125L * (long)(song.Duration ?? 0);
+        }
+
         var result = new Dictionary<string, object>
         {
             ["id"] = song.Id,
@@ -291,13 +324,18 @@ public class SubsonicResponseBuilder
             ["coverArt"] = song.Id,
             ["suffix"] = suffix,
             ["contentType"] = contentType,
+            ["bitRate"] = bitRate,
+            ["size"] = size,
             ["type"] = "music",
             ["isVideo"] = false,
             ["isExternal"] = !song.IsLocal
         };
 
-        result["bitRate"] = bitRate;
-        
+        if (created != null)
+        {
+            result["created"] = created;
+        }
+
         return result;
     }
 
@@ -368,12 +406,13 @@ public class SubsonicResponseBuilder
             // Best-effort: ignore filesystem errors
         }
 
-        // Determine bit rate (kbps) and estimate size if missing
-        var bitRate = isSquid ? 1141 : (song.IsLocal ? 128 : 0);
+        // Determine suffix, contentType and bit rate (kbps), and estimate size if missing
+        var (suffix, contentType, bitRate) = GetSuffixContentTypeAndBitrate(song);
         if (size == 0 && (song.Duration ?? 0) > 0 && bitRate > 0)
         {
             // size (bytes) = bitRate (kbps) * 125 (bytes/sec per kbps) * duration (sec)
-            size = (long)bitRate * 125L * (song.Duration ?? 0);
+            var duration = (long)(song.Duration ?? 0);
+            size = (long)bitRate * 125L * duration;
         }
 
         var songElement = new XElement(ns + "song",
@@ -383,13 +422,12 @@ public class SubsonicResponseBuilder
             new XAttribute("albumId", albumId),
             new XAttribute("parent", albumId),
             new XAttribute("artist", song.Artist ?? ""),
-            new XAttribute("artistId", song.ArtistId ?? string.Empty),
             new XAttribute("duration", song.Duration ?? 0),
             new XAttribute("track", song.Track ?? 0),
             new XAttribute("year", song.Year ?? 0),
             new XAttribute("coverArt", song.Id),
-            new XAttribute("suffix", isSquid ? "flac" : (song.IsLocal ? "mp3" : "Remote")),
-            new XAttribute("contentType", isSquid ? "audio/flac" : "audio/mpeg"),
+            new XAttribute("suffix", suffix),
+            new XAttribute("contentType", contentType),
             new XAttribute("type", "music"),
             new XAttribute("isVideo", "false"),
             new XAttribute("bitRate", bitRate),
@@ -397,6 +435,11 @@ public class SubsonicResponseBuilder
             new XAttribute("isDir", "false"),
             new XAttribute("isExternal", (!song.IsLocal).ToString().ToLower())
         );
+
+        if (!string.IsNullOrEmpty(song.ArtistId))
+        {
+            songElement.Add(new XAttribute("artistId", song.ArtistId));
+        }
 
         if (!string.IsNullOrEmpty(created))
         {
