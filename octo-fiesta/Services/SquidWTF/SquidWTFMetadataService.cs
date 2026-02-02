@@ -368,6 +368,16 @@ public class SquidWTFMetadataService : IMusicMetadataService
                 song.AlbumId = album.Id;
                 song.AlbumArtist = album.Artist;
                 
+                // Use album cover for tracks if track doesn't have one (common for tracks from /api/get-album)
+                if (string.IsNullOrEmpty(song.CoverArtUrl))
+                {
+                    song.CoverArtUrl = album.CoverArtUrl;
+                }
+                if (string.IsNullOrEmpty(song.CoverArtUrlLarge))
+                {
+                    song.CoverArtUrlLarge = album.CoverArtUrlLarge;
+                }
+                
                 if (ShouldIncludeSong(song))
                 {
                     album.Songs.Add(song);
@@ -576,6 +586,10 @@ public class SquidWTFMetadataService : IMusicMetadataService
                     if (string.IsNullOrEmpty(song.CoverArtUrl))
                     {
                         song.CoverArtUrl = album.CoverArtUrl;
+                    }
+                    if (string.IsNullOrEmpty(song.CoverArtUrlLarge))
+                    {
+                        song.CoverArtUrlLarge = album.CoverArtUrlLarge;
                     }
                     
                     if (ShouldIncludeSong(song))
@@ -805,6 +819,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
             Year = year,
             SongCount = album.TracksCount,
             CoverArtUrl = album.Image?.Small ?? album.Image?.Thumbnail,
+            CoverArtUrlLarge = album.Image?.Large,
             Genre = album.Genre?.Name,
             IsLocal = false,
             ExternalProvider = "squidwtf",
@@ -932,6 +947,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
             Year = year,
             SongCount = album.NumberOfTracks,
             CoverArtUrl = GetTidalCoverUrl(album.Cover, "320x320"),
+            CoverArtUrlLarge = GetTidalCoverUrl(album.Cover, "1280x1280"),
             IsLocal = false,
             ExternalProvider = "squidwtf",
             ExternalId = externalId
@@ -978,6 +994,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
             Year = year,
             SongCount = albumData.NumberOfTracks,
             CoverArtUrl = GetTidalCoverUrl(albumData.Cover, "320x320"),
+            CoverArtUrlLarge = GetTidalCoverUrl(albumData.Cover, "1280x1280"),
             IsLocal = false,
             ExternalProvider = "squidwtf",
             ExternalId = externalId
