@@ -21,7 +21,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
     
     // API endpoints
     private const string QobuzBaseUrl = "https://qobuz.squid.wtf";
-    private const string TidalBaseUrl = "https://triton.squid.wtf";
+    private const string TidalBaseUrl = "https://tidal-api.binimum.org";
     
     // Required headers
     private const string QobuzCountryHeader = "Token-Country";
