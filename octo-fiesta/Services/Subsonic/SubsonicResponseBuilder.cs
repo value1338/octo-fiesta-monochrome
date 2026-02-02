@@ -428,23 +428,13 @@ public class SubsonicResponseBuilder
             };
         }
 
-        // For SquidWTF provider without cached file, default to FLAC
-        // (actual format depends on quality settings, but FLAC is the most common)
-        var isSquid = !string.IsNullOrEmpty(song.ExternalProvider) && 
-                      song.ExternalProvider.Equals("SquidWTF", StringComparison.OrdinalIgnoreCase);
-        
-        if (isSquid)
-        {
-            return ("flac", "audio/flac", 1411);
-        }
-
         // For local library files without path info
         if (song.IsLocal)
         {
             return ("mp3", "audio/mpeg", 128);
         }
 
-        // Default for other external providers
+        // Default for external providers (Deezer, Qobuz, SquidWTF) without cached file
         return ("Remote", "audio/mpeg", 0);
     }
 
