@@ -58,7 +58,15 @@ public class SubsonicController : ControllerBase
             throw new Exception("Error: Environment variable SUBSONIC_URL is not set.");
         }
     }
-
+    /// <summary>
+    /// Simple health check for root path to return HTTP 200. Some clients need this (ex. Amperfy)
+    /// </summary>
+    [HttpGet]
+    [Route("")]
+    public IActionResult Index()
+    {
+        return Ok(new { status = "ok" });
+    }
     // Extract all parameters (query + body)
     private async Task<Dictionary<string, string>> ExtractAllParameters()
     {
@@ -702,7 +710,7 @@ public class SubsonicController : ControllerBase
                 )
             );
 
-            return Content(doc.ToString(), "application/xml");
+            return Content(doc.ToString(), "application/xml; charset=utf-8");
         }
     }
 
@@ -790,7 +798,7 @@ public class SubsonicController : ControllerBase
                 return StatusCode(result.StatusCode);
             }
             
-            var contentType = result.ContentType ?? "application/xml";
+            var contentType = result.ContentType ?? "application/xml; charset=utf-8";
             return File(result.Body, contentType);
         }
         catch (HttpRequestException ex)
