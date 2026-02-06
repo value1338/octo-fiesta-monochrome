@@ -115,11 +115,32 @@ public class SquidWTFMetadataService : IMusicMetadataService
         
         await Task.WhenAll(songsTask, albumsTask, artistsTask);
         
+        var songs = await songsTask;
+        var albums = await albumsTask;
+        var artists = await artistsTask;
+        
+        // Cross-reference artists with albums to populate AlbumCount
+        // This avoids extra API calls since we already have album results
+        if (artists.Count > 0 && albums.Count > 0)
+        {
+            foreach (var artist in artists)
+            {
+                if (artist.AlbumCount == null || artist.AlbumCount == 0)
+                {
+                    var matchingAlbums = albums.Count(a => a.ArtistId == artist.Id);
+                    if (matchingAlbums > 0)
+                    {
+                        artist.AlbumCount = matchingAlbums;
+                    }
+                }
+            }
+        }
+        
         return new SearchResult
         {
-            Songs = await songsTask,
-            Albums = await albumsTask,
-            Artists = await artistsTask
+            Songs = songs,
+            Albums = albums,
+            Artists = artists
         };
     }
 
@@ -870,7 +891,11 @@ public class SquidWTFMetadataService : IMusicMetadataService
             Id = $"ext-squidwtf-song-{externalId}",
             Title = track.Title ?? "",
             Artist = track.Artist?.Name ?? (track.Artists?.FirstOrDefault()?.Name ?? ""),
-            ArtistId = track.Artist != null ? $"ext-squidwtf-artist-{track.Artist.Id}" : null,
+            ArtistId = track.Artist != null 
+                ? $"ext-squidwtf-artist-{track.Artist.Id}" 
+                : (track.Artists?.FirstOrDefault() is { } firstArtist 
+                    ? $"ext-squidwtf-artist-{firstArtist.Id}" 
+                    : null),
             Album = track.Album?.Title ?? "",
             AlbumId = track.Album != null ? $"ext-squidwtf-album-{track.Album.Id}" : null,
             Duration = track.Duration,
@@ -909,7 +934,11 @@ public class SquidWTFMetadataService : IMusicMetadataService
             Id = $"ext-squidwtf-song-{externalId}",
             Title = track.Title ?? "",
             Artist = track.Artist?.Name ?? (track.Artists?.FirstOrDefault()?.Name ?? ""),
-            ArtistId = track.Artist != null ? $"ext-squidwtf-artist-{track.Artist.Id}" : null,
+            ArtistId = track.Artist != null 
+                ? $"ext-squidwtf-artist-{track.Artist.Id}" 
+                : (track.Artists?.FirstOrDefault() is { } firstTrackInfoArtist 
+                    ? $"ext-squidwtf-artist-{firstTrackInfoArtist.Id}" 
+                    : null),
             Album = track.Album?.Title ?? "",
             AlbumId = track.Album != null ? $"ext-squidwtf-album-{track.Album.Id}" : null,
             Duration = track.Duration,
@@ -942,12 +971,15 @@ public class SquidWTFMetadataService : IMusicMetadataService
             }
         }
         
+        // Get main artist from singular field or first in artists array
+        var mainArtist = album.Artist ?? album.Artists?.FirstOrDefault();
+        
         return new Album
         {
             Id = $"ext-squidwtf-album-{externalId}",
             Title = album.Title ?? "",
-            Artist = album.Artist?.Name ?? (album.Artists?.FirstOrDefault()?.Name ?? ""),
-            ArtistId = album.Artist != null ? $"ext-squidwtf-artist-{album.Artist.Id}" : null,
+            Artist = mainArtist?.Name ?? "",
+            ArtistId = mainArtist != null ? $"ext-squidwtf-artist-{mainArtist.Id}" : null,
             Year = year,
             SongCount = album.NumberOfTracks,
             CoverArtUrl = GetTidalCoverUrl(album.Cover, "320x320"),
@@ -989,12 +1021,15 @@ public class SquidWTFMetadataService : IMusicMetadataService
             }
         }
         
+        // Get main artist from singular field or first in artists array
+        var mainArtist = albumData.Artist ?? albumData.Artists?.FirstOrDefault();
+        
         return new Album
         {
             Id = $"ext-squidwtf-album-{externalId}",
             Title = albumData.Title ?? "",
-            Artist = albumData.Artist?.Name ?? (albumData.Artists?.FirstOrDefault()?.Name ?? ""),
-            ArtistId = albumData.Artist != null ? $"ext-squidwtf-artist-{albumData.Artist.Id}" : null,
+            Artist = mainArtist?.Name ?? "",
+            ArtistId = mainArtist != null ? $"ext-squidwtf-artist-{mainArtist.Id}" : null,
             Year = year,
             SongCount = albumData.NumberOfTracks,
             CoverArtUrl = GetTidalCoverUrl(albumData.Cover, "320x320"),
