@@ -1,0 +1,21 @@
+# Build
+bin/
+obj/
+out/
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Lokale Einstellungen (können Secrets enthalten)
+appsettings.Development.json
+
+# Sonstiges
+*.log
+*.cache
+.DS_Store
+Thumbs.db
