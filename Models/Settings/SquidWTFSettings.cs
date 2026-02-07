@@ -30,6 +30,7 @@ public class SquidWTFSettings
     /// <summary>
     /// Default Monochrome API instances for metadata operations
     /// Used when ApiInstances is empty
+    /// Includes SquidWTF Tidal instances as fallback
     /// </summary>
     public static readonly string[] DefaultApiInstances =
     [
@@ -40,12 +41,15 @@ public class SquidWTFSettings
         "https://wolf.qqdl.site",
         "https://hifi-one.spotisaver.net",
         "https://hifi-two.spotisaver.net",
-        "https://tidal.kinoplus.online"
+        "https://tidal.kinoplus.online",
+        // SquidWTF Tidal instances (no auth required)
+        "https://tidal-api.binimum.org"
     ];
 
     /// <summary>
     /// Default Monochrome instances for streaming operations
     /// Used when StreamingInstances is empty
+    /// Includes SquidWTF Tidal instances as fallback
     /// </summary>
     public static readonly string[] DefaultStreamingInstances =
     [
@@ -57,7 +61,9 @@ public class SquidWTFSettings
         "https://hund.qqdl.site",
         "https://tidal.kinoplus.online",
         "https://hifi-one.spotisaver.net",
-        "https://hifi-two.spotisaver.net"
+        "https://hifi-two.spotisaver.net",
+        // SquidWTF Tidal instances (no auth required)
+        "https://tidal-api.binimum.org"
     ];
 
     /// <summary>

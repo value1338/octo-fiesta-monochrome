@@ -3,33 +3,24 @@ version: "3.8"
 services:
   octo-fiesta:
     build: .
+    image: octo-fiesta:latest
     container_name: octo-fiesta
     restart: unless-stopped
     ports:
-      - "4533:4533"
+      - "4534:4533"
     volumes:
-      # Music library (where downloads are saved)
       - /mnt/user/music:/music
-      # Cache directory (for temporary files)
       - /mnt/user/appdata/octo-fiesta/cache:/cache
-      # Config directory
       - /mnt/user/appdata/octo-fiesta/config:/config
     environment:
-      # Subsonic server to proxy (e.g., Navidrome)
-      - SUBSONIC_URL=http://navidrome:4533
+      # Navidrome/Subsonic (Docker: navidrome:4533, http://IP:4533)
+      - Subsonic__Url=http://navidrome:4533
 
-      # Storage mode: Permanent (save to library) or Cache (temporary)
-      - STORAGE_MODE=Permanent
+      - Subsonic__EnableExternalPlaylists=true
+      - Subsonic__StorageMode=Permanent
+      - Subsonic__DownloadMode=Track
 
-      # Download mode: Track (single track) or Album (full album)
-      - DOWNLOAD_MODE=Track
+      - SquidWTF__Quality=HI_RES_LOSSLESS
 
-      # Quality: HI_RES_LOSSLESS (24-bit FLAC) or LOSSLESS (16-bit FLAC)
-      - SQUIDWTF__Quality=HI_RES_LOSSLESS
-
-      # Enable external playlist search
-      - SUBSONIC__EnableExternalPlaylists=true
-
-      # Paths
       - Library__DownloadPath=/music
       - Library__CachePath=/cache
