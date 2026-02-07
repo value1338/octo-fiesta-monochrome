@@ -20,12 +20,17 @@ public class MonochromeApiClient
     private const string ClientHeader = "x-client";
     private const string ClientValue = "BiniLossless/v3.4";
 
+    // Timeout for API requests (same as dev version)
+    private const int DefaultTimeoutSeconds = 5;
+
     public MonochromeApiClient(
         IHttpClientFactory httpClientFactory,
         IOptions<SquidWTFSettings> settings,
         ILogger<MonochromeApiClient> logger)
     {
         _httpClient = httpClientFactory.CreateClient();
+        // Set timeout for API requests (5 seconds per request like dev version)
+        _httpClient.Timeout = TimeSpan.FromSeconds(DefaultTimeoutSeconds);
 
         // Separate client for downloads with longer timeout (10 minutes for large FLAC files)
         _downloadClient = httpClientFactory.CreateClient();
