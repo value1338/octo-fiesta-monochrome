@@ -285,15 +285,16 @@ public class SubsonicResponseBuilder
             ["track"] = song.Track ?? 0,
             ["year"] = song.Year ?? 0,
             ["coverArt"] = song.Id,
-            ["suffix"] = song.IsLocal ? "mp3" : "Remote",
-            ["contentType"] = "audio/mpeg",
+            ["suffix"] = "flac",  // Arpeggi expects a real audio format
+            ["contentType"] = "audio/flac",
             ["type"] = "music",
             ["isVideo"] = false,
             ["isExternal"] = !song.IsLocal
         };
-        
-        result["bitRate"] = song.IsLocal ? 128 : 0; // Default bitrate for local files
-        
+
+        // Set a realistic bitRate - Arpeggi may hide tracks with bitRate 0
+        result["bitRate"] = song.IsLocal ? 320 : 1411; // 1411 kbps = CD quality FLAC
+
         return result;
     }
 
@@ -344,6 +345,9 @@ public class SubsonicResponseBuilder
             new XAttribute("track", song.Track ?? 0),
             new XAttribute("year", song.Year ?? 0),
             new XAttribute("coverArt", song.Id),
+            new XAttribute("suffix", "flac"),
+            new XAttribute("contentType", "audio/flac"),
+            new XAttribute("bitRate", song.IsLocal ? 320 : 1411),
             new XAttribute("isExternal", (!song.IsLocal).ToString().ToLower())
         );
     }
