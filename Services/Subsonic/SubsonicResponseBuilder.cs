@@ -271,7 +271,8 @@ public class SubsonicResponseBuilder
     /// </summary>
     public Dictionary<string, object> ConvertSongToJson(Song song)
     {
-        var result = new Dictionary<string, object>
+        // Note: Removed isExternal field as Arpeggi filters out tracks with isExternal=true
+        return new Dictionary<string, object>
         {
             ["id"] = song.Id,
             ["parent"] = song.AlbumId ?? "",
@@ -285,17 +286,13 @@ public class SubsonicResponseBuilder
             ["track"] = song.Track ?? 0,
             ["year"] = song.Year ?? 0,
             ["coverArt"] = song.Id,
-            ["suffix"] = "flac",  // Arpeggi expects a real audio format
+            ["suffix"] = "flac",
             ["contentType"] = "audio/flac",
+            ["bitRate"] = 1411,
+            ["size"] = (song.Duration ?? 180) * 176400, // Approximate file size for FLAC
             ["type"] = "music",
-            ["isVideo"] = false,
-            ["isExternal"] = !song.IsLocal
+            ["isVideo"] = false
         };
-
-        // Set a realistic bitRate - Arpeggi may hide tracks with bitRate 0
-        result["bitRate"] = song.IsLocal ? 320 : 1411; // 1411 kbps = CD quality FLAC
-
-        return result;
     }
 
     /// <summary>
@@ -336,6 +333,7 @@ public class SubsonicResponseBuilder
     /// </summary>
     public XElement ConvertSongToXml(Song song, XNamespace ns)
     {
+        // Note: Removed isExternal attribute as Arpeggi filters out tracks with isExternal=true
         return new XElement(ns + "song",
             new XAttribute("id", song.Id),
             new XAttribute("title", song.Title),
@@ -347,8 +345,8 @@ public class SubsonicResponseBuilder
             new XAttribute("coverArt", song.Id),
             new XAttribute("suffix", "flac"),
             new XAttribute("contentType", "audio/flac"),
-            new XAttribute("bitRate", song.IsLocal ? 320 : 1411),
-            new XAttribute("isExternal", (!song.IsLocal).ToString().ToLower())
+            new XAttribute("bitRate", 1411),
+            new XAttribute("size", (song.Duration ?? 180) * 176400)
         );
     }
 
