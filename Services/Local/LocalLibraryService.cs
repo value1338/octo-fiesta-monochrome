@@ -200,34 +200,52 @@ public async Task RegisterDownloadedSongAsync(Song song, string localPath, strin
         var now = DateTime.UtcNow;
         if (now - _lastScanTrigger < _scanDebounceInterval)
         {
-            _logger.LogDebug("Scan debounced - last scan was {Elapsed}s ago", 
+            _logger.LogDebug("Scan debounced - last scan was {Elapsed}s ago",
                 (now - _lastScanTrigger).TotalSeconds);
             return true;
         }
-        
+
         _lastScanTrigger = now;
-        
+
         try
         {
-            // Call Subsonic API to trigger a scan
-            // Note: This endpoint works without authentication on most Subsonic/Navidrome servers
-            // when called from localhost. For remote servers requiring auth, this would need
-            // to be refactored to accept credentials from the controller layer.
-            var url = $"{_subsonicSettings.Url}/rest/startScan?f=json";
-            
+            // Build URL with authentication if credentials are provided
+            var url = $"{_subsonicSettings.Url}/rest/startScan?f=json&v=1.16.1&c=octo-fiesta";
+
+            if (!string.IsNullOrEmpty(_subsonicSettings.Username) && !string.IsNullOrEmpty(_subsonicSettings.Password))
+            {
+                // Use salt-based token authentication (more secure than plaintext password)
+                var salt = Guid.NewGuid().ToString("N").Substring(0, 8);
+                var token = CreateMd5Hash(_subsonicSettings.Password + salt);
+                url += $"&u={Uri.EscapeDataString(_subsonicSettings.Username)}&t={token}&s={salt}";
+            }
+
             _logger.LogInformation("Triggering Subsonic library scan...");
-            
+
             var response = await _httpClient.GetAsync(url);
-            
+
             if (response.IsSuccessStatusCode)
             {
                 var content = await response.Content.ReadAsStringAsync();
-                _logger.LogInformation("Subsonic scan triggered successfully: {Response}", content);
+
+                // Check if response contains an error
+                if (content.Contains("\"status\":\"ok\""))
+                {
+                    _logger.LogInformation("Subsonic scan triggered successfully");
+                    return true;
+                }
+                else if (content.Contains("\"status\":\"failed\""))
+                {
+                    _logger.LogWarning("Subsonic scan failed: {Response}. Configure Subsonic__Username and Subsonic__Password environment variables.", content);
+                    return false;
+                }
+
+                _logger.LogInformation("Subsonic scan response: {Response}", content);
                 return true;
             }
             else
             {
-                _logger.LogWarning("Failed to trigger Subsonic scan: {StatusCode} - Server may require authentication", response.StatusCode);
+                _logger.LogWarning("Failed to trigger Subsonic scan: {StatusCode}", response.StatusCode);
                 return false;
             }
         }
@@ -238,13 +256,26 @@ public async Task RegisterDownloadedSongAsync(Song song, string localPath, strin
         }
     }
 
+    private static string CreateMd5Hash(string input)
+    {
+        using var md5 = System.Security.Cryptography.MD5.Create();
+        var inputBytes = System.Text.Encoding.UTF8.GetBytes(input);
+        var hashBytes = md5.ComputeHash(inputBytes);
+        return Convert.ToHexString(hashBytes).ToLowerInvariant();
+    }
+
     public async Task<ScanStatus?> GetScanStatusAsync()
     {
         try
         {
-            // Note: This endpoint works without authentication on most Subsonic/Navidrome servers
-            // when called from localhost.
-            var url = $"{_subsonicSettings.Url}/rest/getScanStatus?f=json";
+            var url = $"{_subsonicSettings.Url}/rest/getScanStatus?f=json&v=1.16.1&c=octo-fiesta";
+
+            if (!string.IsNullOrEmpty(_subsonicSettings.Username) && !string.IsNullOrEmpty(_subsonicSettings.Password))
+            {
+                var salt = Guid.NewGuid().ToString("N").Substring(0, 8);
+                var token = CreateMd5Hash(_subsonicSettings.Password + salt);
+                url += $"&u={Uri.EscapeDataString(_subsonicSettings.Username)}&t={token}&s={salt}";
+            }
             
             var response = await _httpClient.GetAsync(url);
             

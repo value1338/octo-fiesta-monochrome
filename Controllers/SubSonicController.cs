@@ -76,6 +76,10 @@ public class SubsonicController : ControllerBase
         var parameters = await ExtractAllParameters();
         var query = parameters.GetValueOrDefault("query", "");
         var format = parameters.GetValueOrDefault("f", "xml");
+        var client = parameters.GetValueOrDefault("c", "unknown");
+
+        _logger.LogInformation("Search3 request from client '{Client}': query='{Query}', format={Format}, params={Params}",
+            client, query, format, string.Join(", ", parameters.Select(p => $"{p.Key}={p.Value}")));
         
         var cleanQuery = query.Trim().Trim('"');
         
@@ -116,6 +120,24 @@ public class SubsonicController : ControllerBase
     }
 
     /// <summary>
+    /// Legacy search endpoint (search2) - redirects to search3.
+    /// Some clients like Symfonium may use this.
+    /// </summary>
+    [HttpGet, HttpPost]
+    [Route("rest/search2")]
+    [Route("rest/search2.view")]
+    public async Task<IActionResult> Search2()
+    {
+        var parameters = await ExtractAllParameters();
+        var client = parameters.GetValueOrDefault("c", "unknown");
+
+        _logger.LogInformation("Search2 request from client '{Client}' - redirecting to Search3", client);
+
+        // search2 uses same parameters as search3, just return search3 results
+        return await Search3();
+    }
+
+    /// <summary>
     /// Downloads on-the-fly if needed.
     /// </summary>
     [HttpGet, HttpPost]
@@ -125,6 +147,9 @@ public class SubsonicController : ControllerBase
     {
         var parameters = await ExtractAllParameters();
         var id = parameters.GetValueOrDefault("id", "");
+        var client = parameters.GetValueOrDefault("c", "unknown");
+
+        _logger.LogInformation("Stream request from client '{Client}': id={Id}", client, id);
 
         if (string.IsNullOrWhiteSpace(id))
         {
@@ -781,6 +806,12 @@ public class SubsonicController : ControllerBase
     [Route("{**endpoint}")]
     public async Task<IActionResult> GenericEndpoint(string endpoint)
     {
+        var parameters = await ExtractAllParameters();
+        var client = parameters.GetValueOrDefault("c", "unknown");
+
+        _logger.LogInformation("Generic endpoint from client '{Client}': {Endpoint}, params={Params}",
+            client, endpoint, string.Join(", ", parameters.Select(p => $"{p.Key}={p.Value}")));
+
         try
         {
             var result = await _proxyService.RelayRequestAsync(endpoint, Request, HttpContext.RequestAborted);
@@ -795,7 +826,6 @@ public class SubsonicController : ControllerBase
         }
         catch (HttpRequestException ex)
         {
-            var parameters = await ExtractAllParameters();
             var format = parameters.GetValueOrDefault("f", "xml");
             return _responseBuilder.CreateError(format, 0, $"Error connecting to Subsonic server: {ex.Message}");
         }

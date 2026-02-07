@@ -12,6 +12,7 @@ namespace octo_fiesta.Services.SquidWTF;
 public class MonochromeApiClient
 {
     private readonly HttpClient _httpClient;
+    private readonly HttpClient _downloadClient;
     private readonly SquidWTFSettings _settings;
     private readonly ILogger<MonochromeApiClient> _logger;
 
@@ -25,6 +26,11 @@ public class MonochromeApiClient
         ILogger<MonochromeApiClient> logger)
     {
         _httpClient = httpClientFactory.CreateClient();
+
+        // Separate client for downloads with longer timeout (10 minutes for large FLAC files)
+        _downloadClient = httpClientFactory.CreateClient();
+        _downloadClient.Timeout = TimeSpan.FromMinutes(10);
+
         _settings = settings.Value;
         _logger = logger;
     }
@@ -46,16 +52,18 @@ public class MonochromeApiClient
 
     /// <summary>
     /// Sends a request to a specific URL (for streaming/download)
+    /// Uses a dedicated client with longer timeout for large files
     /// </summary>
     public async Task<HttpResponseMessage> SendDirectAsync(
         string url,
         CancellationToken cancellationToken = default)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Add("User-Agent", "Mozilla/5.0");
         request.Headers.Add("Accept", "*/*");
 
-        return await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        // Use download client with 10-minute timeout for large FLAC files
+        return await _downloadClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
     }
 
     /// <summary>

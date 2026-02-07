@@ -60,6 +60,20 @@ public enum StorageMode
 public class SubsonicSettings
 {
     public string? Url { get; set; }
+
+    /// <summary>
+    /// Username for Subsonic/Navidrome authentication (optional)
+    /// Required for triggering library scans
+    /// Environment variable: Subsonic__Username
+    /// </summary>
+    public string? Username { get; set; }
+
+    /// <summary>
+    /// Password for Subsonic/Navidrome authentication (optional)
+    /// Required for triggering library scans
+    /// Environment variable: Subsonic__Password
+    /// </summary>
+    public string? Password { get; set; }
     
     /// <summary>
     /// Explicit content filter mode (default: All)
