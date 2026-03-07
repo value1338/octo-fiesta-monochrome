@@ -1,12 +1,12 @@
 # Octo-Fiesta Monochrome (Beta)
 
-Subsonic-Proxy zwischen Navidrome und deinem Client. Nutzt **Monochrome** (Tidal) als Streaming-Backend für Tracks, die nicht lokal vorhanden sind.
+A Subsonic API proxy between Navidrome and your client. Uses **Monochrome** (Tidal) as a streaming backend for tracks not in your local library.
 
-## Beta: Spotify-Playlist-Suche
+## Beta: Spotify Playlist Search
 
-In dieser Beta-Version kannst du zusätzlich **Spotify-Playlists** durchsuchen. Die Tracks werden über SongLink auf Tidal gemappt und über Monochrome abgespielt.
+This beta adds **Spotify playlist search**. Playlists appear alongside Tidal results; tracks are mapped to Tidal via SongLink and streamed through Monochrome.
 
-**Noch nicht fertig:** Die Spotify-Integration ist experimentell. Der reverse-engineerte Spotify-Client kann regional blockiert sein; SongLink hat ein Rate-Limit (~7 s pro Track). Große Playlists laden entsprechend langsam.
+**Not production-ready:** The Spotify integration is experimental. The reverse-engineered Spotify client may be blocked in some regions; SongLink has a rate limit (~7 s per track), so large playlists load slowly.
 
 ## Quick Start
 
@@ -16,16 +16,16 @@ cd octo-fiesta-monochrome
 git checkout beta
 
 cp .env.example .env
-# .env bearbeiten: Navidrome-URL, User, Passwort
+# Edit .env: Navidrome URL, username, password
 
 docker compose build
 docker compose up -d
 ```
 
-Octo-Fiesta läuft auf **http://localhost:4534**. Subsonic-Client auf diese URL zeigen.
+Octo-Fiesta runs at **http://localhost:4534**. Point your Subsonic client to this URL.
 
-**Voraussetzungen:** Navidrome, SquidWTF mit Tidal-Backend. Für Spotify: `Subsonic__EnableExternalPlaylists` = `true`, `Subsonic__MusicService` = `SquidWTF`, `SquidWTF__Source` = `Tidal`.
+**Requirements:** Navidrome, SquidWTF with Tidal backend. For Spotify: `Subsonic__EnableExternalPlaylists` = `true`, `Subsonic__MusicService` = `SquidWTF`, `SquidWTF__Source` = `Tidal`.
 
-## Lizenz
+## License
 
 GPL-3.0
