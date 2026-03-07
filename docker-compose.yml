@@ -1,0 +1,15 @@
+services:
+  octo-fiesta:
+    build: .
+    image: octo-fiesta:latest
+    container_name: navidrome-octo-fiesta
+    restart: always
+    ports:
+      - "4534:8080"
+    # Musik-Ordner: Host-Pfad anpassen (muss mit Navidrome übereinstimmen)
+    volumes:
+      - /pfad/zu/deiner/musik:/music
+    env_file:
+      - .env
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production

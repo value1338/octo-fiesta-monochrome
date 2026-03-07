@@ -1,0 +1,1231 @@
+using octo_fiesta.Models.Domain;
+using octo_fiesta.Models.Settings;
+using octo_fiesta.Models.Search;
+using octo_fiesta.Models.Subsonic;
+using octo_fiesta.Models.SquidWTF;
+using octo_fiesta.Services.Spotify;
+using System.Collections.Concurrent;
+using System.Text.Json;
+using Microsoft.Extensions.Options;
+
+namespace octo_fiesta.Services.SquidWTF;
+
+/// <summary>
+/// Metadata service implementation using SquidWTF API
+/// Supports both Qobuz and Tidal backends
+/// </summary>
+public class SquidWTFMetadataService : IMusicMetadataService
+{
+    private readonly HttpClient _httpClient;
+    private readonly SquidWTFSettings _settings;
+    private readonly SubsonicSettings _subsonicSettings;
+    private readonly SquidWTFInstanceManager _instanceManager;
+    private readonly ISpotifyPlaylistService _spotifyPlaylistService;
+    private readonly ILogger<SquidWTFMetadataService> _logger;
+
+    // Search cache to reduce duplicate API calls (e.g. from client polling or rapid tab switches)
+    private static readonly ConcurrentDictionary<string, (object? Result, DateTime ExpiresAt)> _searchCache = new();
+    private static readonly TimeSpan SearchCacheTtl = TimeSpan.FromSeconds(8);
+
+    // Artist albums cache (same artist may be requested repeatedly)
+    private static readonly ConcurrentDictionary<string, (List<Album> Result, DateTime ExpiresAt)> _artistAlbumsCache = new();
+    private static readonly TimeSpan ArtistAlbumsCacheTtl = TimeSpan.FromSeconds(30);
+    
+    // API endpoints
+    private const string QobuzBaseUrl = "https://qobuz.squid.wtf";
+    
+    // Required headers
+    private const string QobuzCountryHeader = "Token-Country";
+    private const string QobuzCountryValue = "US";
+    private const string TidalClientHeader = "x-client";
+    private const string TidalClientValue = "BiniLossless/v3.4";
+    
+    private bool IsQobuzSource => _settings.Source.Equals("Qobuz", StringComparison.OrdinalIgnoreCase);
+
+    public SquidWTFMetadataService(
+        IHttpClientFactory httpClientFactory, 
+        IOptions<SquidWTFSettings> settings,
+        IOptions<SubsonicSettings> subsonicSettings,
+        SquidWTFInstanceManager instanceManager,
+        ISpotifyPlaylistService spotifyPlaylistService,
+        ILogger<SquidWTFMetadataService> logger)
+    {
+        _httpClient = httpClientFactory.CreateClient();
+        _settings = settings.Value;
+        _subsonicSettings = subsonicSettings.Value;
+        _instanceManager = instanceManager;
+        _spotifyPlaylistService = spotifyPlaylistService;
+        _logger = logger;
+    }
+
+    #region IMusicMetadataService Implementation
+
+    public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20)
+    {
+        try
+        {
+            if (IsQobuzSource)
+            {
+                return await SearchSongsQobuzAsync(query, limit);
+            }
+            else
+            {
+                return await SearchSongsTidalAsync(query, limit);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to search songs for query: {Query}", query);
+            return new List<Song>();
+        }
+    }
+
+    public async Task<List<Album>> SearchAlbumsAsync(string query, int limit = 20)
+    {
+        try
+        {
+            if (IsQobuzSource)
+            {
+                return await SearchAlbumsQobuzAsync(query, limit);
+            }
+            else
+            {
+                return await SearchAlbumsTidalAsync(query, limit);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to search albums for query: {Query}", query);
+            return new List<Album>();
+        }
+    }
+
+    public async Task<List<Artist>> SearchArtistsAsync(string query, int limit = 20)
+    {
+        return await GetOrAddSearchCache($"artists:{query}:{limit}", async () =>
+        {
+            try
+            {
+                if (IsQobuzSource)
+                {
+                    return await SearchArtistsQobuzAsync(query, limit);
+                }
+                else
+                {
+                    return await SearchArtistsTidalAsync(query, limit);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to search artists for query: {Query}", query);
+                return new List<Artist>();
+            }
+        });
+    }
+
+    public async Task<SearchResult> SearchAllAsync(string query, int songLimit = 20, int albumLimit = 20, int artistLimit = 20)
+    {
+        var songsTask = SearchSongsAsync(query, songLimit);
+        var albumsTask = SearchAlbumsAsync(query, albumLimit);
+        var artistsTask = SearchArtistsAsync(query, artistLimit);
+        
+        await Task.WhenAll(songsTask, albumsTask, artistsTask);
+        
+        var songs = await songsTask;
+        var albums = await albumsTask;
+        var artists = await artistsTask;
+        
+        // Cross-reference artists with albums to populate AlbumCount
+        // This avoids extra API calls since we already have album results
+        if (artists.Count > 0 && albums.Count > 0)
+        {
+            foreach (var artist in artists)
+            {
+                if (artist.AlbumCount == null || artist.AlbumCount == 0)
+                {
+                    var matchingAlbums = albums.Count(a => a.ArtistId == artist.Id);
+                    if (matchingAlbums > 0)
+                    {
+                        artist.AlbumCount = matchingAlbums;
+                    }
+                }
+            }
+        }
+        
+        return new SearchResult
+        {
+            Songs = songs,
+            Albums = albums,
+            Artists = artists
+        };
+    }
+
+    public async Task<Song?> GetSongAsync(string externalProvider, string externalId)
+    {
+        if (externalProvider != "squidwtf") return null;
+        
+        try
+        {
+            if (IsQobuzSource)
+            {
+                return await GetSongQobuzAsync(externalId);
+            }
+            else
+            {
+                return await GetSongTidalAsync(externalId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get song: {ExternalId}", externalId);
+            return null;
+        }
+    }
+
+    public async Task<Album?> GetAlbumAsync(string externalProvider, string externalId)
+    {
+        if (externalProvider != "squidwtf") return null;
+        
+        try
+        {
+            if (IsQobuzSource)
+            {
+                return await GetAlbumQobuzAsync(externalId);
+            }
+            else
+            {
+                return await GetAlbumTidalAsync(externalId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get album: {ExternalId}", externalId);
+            return null;
+        }
+    }
+
+    public async Task<Artist?> GetArtistAsync(string externalProvider, string externalId)
+    {
+        if (externalProvider != "squidwtf") return null;
+        
+        try
+        {
+            if (IsQobuzSource)
+            {
+                return await GetArtistQobuzAsync(externalId);
+            }
+            else
+            {
+                return await GetArtistTidalAsync(externalId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get artist: {ExternalId}", externalId);
+            return null;
+        }
+    }
+
+    public async Task<List<Album>> GetArtistAlbumsAsync(string externalProvider, string externalId)
+    {
+        if (externalProvider != "squidwtf") return new List<Album>();
+
+        var cacheKey = $"albums:{externalProvider}:{externalId}";
+        var now = DateTime.UtcNow;
+        if (_artistAlbumsCache.TryGetValue(cacheKey, out var cached) && cached.ExpiresAt > now)
+        {
+            return cached.Result;
+        }
+
+        try
+        {
+            List<Album> result;
+            if (IsQobuzSource)
+            {
+                result = await GetArtistAlbumsQobuzAsync(externalId);
+            }
+            else
+            {
+                result = await GetArtistAlbumsTidalAsync(externalId);
+            }
+            _artistAlbumsCache[cacheKey] = (result, now.Add(ArtistAlbumsCacheTtl));
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get artist albums: {ExternalId}", externalId);
+            return new List<Album>();
+        }
+    }
+
+    public async Task<List<ExternalPlaylist>> SearchPlaylistsAsync(string query, int limit = 20)
+    {
+        return await GetOrAddSearchCache($"playlists:{query}:{limit}", async () =>
+        {
+            try
+            {
+                // Only Tidal supports playlist search (+ Spotify stub)
+                if (!IsQobuzSource)
+                {
+                    var tidal = await SearchPlaylistsTidalAsync(query, limit);
+                    var spotify = await _spotifyPlaylistService.SearchPlaylistsAsync(query, limit);
+                    return tidal.Concat(spotify).Take(limit).ToList();
+                }
+
+                return new List<ExternalPlaylist>();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to search playlists for query: {Query}", query);
+                return new List<ExternalPlaylist>();
+            }
+        });
+    }
+
+    public async Task<ExternalPlaylist?> GetPlaylistAsync(string externalProvider, string externalId)
+    {
+        if (externalProvider == "spotify")
+        {
+            try { return await _spotifyPlaylistService.GetPlaylistAsync(externalId); }
+            catch (Exception ex) { _logger.LogError(ex, "Failed to get Spotify playlist: {ExternalId}", externalId); return null; }
+        }
+        if (externalProvider != "squidwtf") return null;
+        
+        try
+        {
+            // Only Tidal supports playlist fetching
+            if (!IsQobuzSource)
+            {
+                return await GetPlaylistTidalAsync(externalId);
+            }
+            
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get playlist: {ExternalId}", externalId);
+            return null;
+        }
+    }
+
+    public async Task<List<Song>> GetPlaylistTracksAsync(string externalProvider, string externalId)
+    {
+        if (externalProvider == "spotify")
+        {
+            try { return await _spotifyPlaylistService.GetPlaylistTracksAsync(externalId); }
+            catch (Exception ex) { _logger.LogError(ex, "Failed to get Spotify playlist tracks: {ExternalId}", externalId); return new List<Song>(); }
+        }
+        if (externalProvider != "squidwtf") return new List<Song>();
+        
+        try
+        {
+            // Only Tidal supports playlist tracks
+            if (!IsQobuzSource)
+            {
+                return await GetPlaylistTracksTidalAsync(externalId);
+            }
+            
+            return new List<Song>();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get playlist tracks: {ExternalId}", externalId);
+            return new List<Song>();
+        }
+    }
+
+    #endregion
+
+    #region Search Cache
+
+    private static async Task<T> GetOrAddSearchCache<T>(string key, Func<Task<T>> factory)
+    {
+        var now = DateTime.UtcNow;
+        if (_searchCache.TryGetValue(key, out var entry) && entry.ExpiresAt > now && entry.Result != null)
+        {
+            return (T)entry.Result;
+        }
+        var result = await factory();
+        _searchCache[key] = (result, now.Add(SearchCacheTtl));
+        return result;
+    }
+
+    #endregion
+
+    #region Qobuz Backend Methods
+
+    private async Task<List<Song>> SearchSongsQobuzAsync(string query, int limit)
+    {
+        var url = $"{QobuzBaseUrl}/api/get-music?q={Uri.EscapeDataString(query)}&offset=0";
+        var response = await SendQobuzRequestAsync(url);
+        
+        if (response == null) return new List<Song>();
+        
+        var searchResponse = JsonSerializer.Deserialize<QobuzSearchResponse>(response);
+        if (searchResponse?.Data?.Tracks?.Items == null) return new List<Song>();
+        
+        var songs = new List<Song>();
+        foreach (var track in searchResponse.Data.Tracks.Items.Take(limit))
+        {
+            var song = MapQobuzTrackToSong(track);
+            if (ShouldIncludeSong(song))
+            {
+                songs.Add(song);
+            }
+        }
+        
+        return songs;
+    }
+
+    private async Task<List<Album>> SearchAlbumsQobuzAsync(string query, int limit)
+    {
+        var url = $"{QobuzBaseUrl}/api/get-music?q={Uri.EscapeDataString(query)}&offset=0";
+        var response = await SendQobuzRequestAsync(url);
+        
+        if (response == null) return new List<Album>();
+        
+        var searchResponse = JsonSerializer.Deserialize<QobuzSearchResponse>(response);
+        if (searchResponse?.Data?.Albums?.Items == null) return new List<Album>();
+        
+        return searchResponse.Data.Albums.Items
+            .Take(limit)
+            .Select(MapQobuzAlbumToAlbum)
+            .ToList();
+    }
+
+    private async Task<List<Artist>> SearchArtistsQobuzAsync(string query, int limit)
+    {
+        var url = $"{QobuzBaseUrl}/api/get-music?q={Uri.EscapeDataString(query)}&offset=0";
+        var response = await SendQobuzRequestAsync(url);
+        
+        if (response == null) return new List<Artist>();
+        
+        var searchResponse = JsonSerializer.Deserialize<QobuzSearchResponse>(response);
+        if (searchResponse?.Data?.Artists?.Items == null) return new List<Artist>();
+        
+        return searchResponse.Data.Artists.Items
+            .Take(limit)
+            .Select(MapQobuzArtistToArtist)
+            .ToList();
+    }
+
+    private async Task<Song?> GetSongQobuzAsync(string trackId)
+    {
+        // Qobuz doesn't have a direct track endpoint, get from album
+        // For now, return a basic song object - full metadata will come from album
+        var url = $"{QobuzBaseUrl}/api/get-music?q={trackId}&offset=0";
+        var response = await SendQobuzRequestAsync(url);
+        
+        if (response == null) return null;
+        
+        var searchResponse = JsonSerializer.Deserialize<QobuzSearchResponse>(response);
+        var track = searchResponse?.Data?.Tracks?.Items?.FirstOrDefault(t => t.Id.ToString() == trackId);
+        
+        if (track == null) return null;
+        
+        return MapQobuzTrackToSong(track);
+    }
+
+    private async Task<Album?> GetAlbumQobuzAsync(string albumId)
+    {
+        var url = $"{QobuzBaseUrl}/api/get-album?album_id={albumId}";
+        var response = await SendQobuzRequestAsync(url);
+        
+        if (response == null) return null;
+        
+        var albumResponse = JsonSerializer.Deserialize<QobuzAlbumResponse>(response);
+        if (albumResponse?.Data == null) return null;
+        
+        var album = MapQobuzAlbumToAlbum(albumResponse.Data);
+        
+        // Add tracks
+        if (albumResponse.Data.Tracks?.Items != null)
+        {
+            foreach (var track in albumResponse.Data.Tracks.Items)
+            {
+                var song = MapQobuzTrackToSong(track);
+                song.Album = album.Title;
+                song.AlbumId = album.Id;
+                song.AlbumArtist = album.Artist;
+                song.Year ??= album.Year;
+                song.Genre ??= album.Genre;
+                song.TotalTracks ??= album.SongCount;
+                
+                // Use album cover for tracks if track doesn't have one (common for tracks from /api/get-album)
+                if (string.IsNullOrEmpty(song.CoverArtUrl))
+                {
+                    song.CoverArtUrl = album.CoverArtUrl;
+                }
+                if (string.IsNullOrEmpty(song.CoverArtUrlLarge))
+                {
+                    song.CoverArtUrlLarge = album.CoverArtUrlLarge;
+                }
+                
+                if (ShouldIncludeSong(song))
+                {
+                    album.Songs.Add(song);
+                }
+            }
+        }
+        
+        return album;
+    }
+
+    private async Task<Artist?> GetArtistQobuzAsync(string artistId)
+    {
+        var url = $"{QobuzBaseUrl}/api/get-artist?artist_id={artistId}";
+        var response = await SendQobuzRequestAsync(url);
+        
+        if (response == null) return null;
+        
+        var artistResponse = JsonSerializer.Deserialize<QobuzArtistResponse>(response);
+        if (artistResponse?.Data?.Artist == null) return null;
+        
+        return MapQobuzArtistToArtist(artistResponse.Data.Artist);
+    }
+
+    private async Task<List<Album>> GetArtistAlbumsQobuzAsync(string artistId)
+    {
+        var artist = await GetArtistQobuzAsync(artistId);
+        if (artist == null) return new List<Album>();
+        
+        // Search for albums by artist name (Qobuz get-artist doesn't return albums list)
+        var url = $"{QobuzBaseUrl}/api/get-music?q={Uri.EscapeDataString(artist.Name)}&offset=0";
+        var response = await SendQobuzRequestAsync(url);
+        
+        if (response == null) return new List<Album>();
+        
+        var searchResponse = JsonSerializer.Deserialize<QobuzSearchResponse>(response);
+        if (searchResponse?.Data?.Albums?.Items == null) return new List<Album>();
+        
+        // Filter albums that have this artist as main artist
+        return searchResponse.Data.Albums.Items
+            .Where(a => a.Artist?.Id.ToString() == artistId)
+            .Select(MapQobuzAlbumToAlbum)
+            .ToList();
+    }
+
+    private async Task<string?> SendQobuzRequestAsync(string url)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Add(QobuzCountryHeader, QobuzCountryValue);
+            
+            var response = await _httpClient.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Qobuz API returned {StatusCode} for {Url}", response.StatusCode, url);
+                return null;
+            }
+            
+            return await response.Content.ReadAsStringAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send Qobuz request to {Url}", url);
+            return null;
+        }
+    }
+
+    #endregion
+
+    #region Tidal Backend Methods
+
+    private async Task<List<Song>> SearchSongsTidalAsync(string query, int limit)
+    {
+        var response = await SendTidalRequestAsync($"/search/?s={Uri.EscapeDataString(query)}");
+        
+        if (response == null) return new List<Song>();
+        
+        var dataResponse = JsonSerializer.Deserialize<TidalDataResponse<TidalTrack>>(response);
+        if (dataResponse?.Data?.Items == null) return new List<Song>();
+        
+        var songs = new List<Song>();
+        foreach (var track in dataResponse.Data.Items.Take(limit))
+        {
+            var song = MapTidalTrackToSong(track);
+            if (ShouldIncludeSong(song))
+            {
+                songs.Add(song);
+            }
+        }
+        
+        return songs;
+    }
+
+    private async Task<List<Album>> SearchAlbumsTidalAsync(string query, int limit)
+    {
+        var response = await SendTidalRequestAsync($"/search/?al={Uri.EscapeDataString(query)}");
+        
+        if (response == null) return new List<Album>();
+        
+        var dataResponse = JsonSerializer.Deserialize<TidalNestedSearchResponse>(response);
+        if (dataResponse?.Data?.Albums?.Items == null) return new List<Album>();
+        
+        return dataResponse.Data.Albums.Items
+            .Take(limit)
+            .Select(MapTidalAlbumToAlbum)
+            .ToList();
+    }
+
+    private async Task<List<Artist>> SearchArtistsTidalAsync(string query, int limit)
+    {
+        var response = await SendTidalRequestAsync($"/search/?a={Uri.EscapeDataString(query)}");
+        
+        if (response == null) return new List<Artist>();
+        
+        var dataResponse = JsonSerializer.Deserialize<TidalNestedSearchResponse>(response);
+        if (dataResponse?.Data?.Artists?.Items == null) return new List<Artist>();
+        
+        var queryLower = query.Trim().ToLowerInvariant();
+        if (string.IsNullOrEmpty(queryLower))
+        {
+            return dataResponse.Data.Artists.Items
+                .Take(limit)
+                .Select(MapTidalArtistToArtist)
+                .ToList();
+        }
+        
+        // Relevanz-Sortierung: Tidal liefert z.B. "Good Charlotte" vor "Cher" bei Suche "Cher"
+        return dataResponse.Data.Artists.Items
+            .Select(MapTidalArtistToArtist)
+            .OrderBy(a => GetArtistRelevanceRank(a.Name, queryLower))
+            .Take(limit)
+            .ToList();
+    }
+    
+    /// <summary>
+    /// Relevanz-Rang für Artist-Sortierung (niedriger = höhere Relevanz).
+    /// </summary>
+    private static int GetArtistRelevanceRank(string? name, string queryLower)
+    {
+        if (string.IsNullOrEmpty(name)) return 99;
+        var nameLower = name.ToLowerInvariant();
+        if (nameLower == queryLower) return 0;                    // Exakte Übereinstimmung
+        if (nameLower.StartsWith(queryLower)) return 1;          // Beginnt mit Suchbegriff
+        if (nameLower.Contains($" {queryLower} ")) return 2;      // Wort im Namen (z.B. "Cher Lloyd")
+        if (nameLower.StartsWith(queryLower + " ") || nameLower.EndsWith(" " + queryLower)) return 2;
+        if (nameLower.Contains(queryLower)) return 3;              // Teilstring (z.B. "cher" in "Charlotte")
+        return 4;
+    }
+
+    private async Task<List<ExternalPlaylist>> SearchPlaylistsTidalAsync(string query, int limit)
+    {
+        var response = await SendTidalRequestAsync($"/search/?p={Uri.EscapeDataString(query)}");
+        
+        if (response == null)
+        {
+            _logger.LogWarning("Tidal playlist search returned null response for query: {Query}", query);
+            return new List<ExternalPlaylist>();
+        }
+        
+        _logger.LogDebug("Tidal playlist search response length: {Length} for query: {Query}", response.Length, query);
+        
+        try
+        {
+            var dataResponse = JsonSerializer.Deserialize<TidalNestedSearchResponse>(response);
+            
+            if (dataResponse?.Data?.Playlists?.Items == null)
+            {
+                _logger.LogWarning("Tidal playlist search - parsed but no playlists found. Data null: {DataNull}, Playlists null: {PlaylistsNull}", 
+                    dataResponse?.Data == null, dataResponse?.Data?.Playlists == null);
+                return new List<ExternalPlaylist>();
+            }
+            
+            _logger.LogInformation("Tidal playlist search found {Count} playlists for query: {Query}", 
+                dataResponse.Data.Playlists.Items.Count, query);
+            
+            return dataResponse.Data.Playlists.Items
+                .Take(limit)
+                .Select(MapTidalPlaylistToExternalPlaylist)
+                .ToList();
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "Failed to deserialize Tidal playlist response for query: {Query}", query);
+            return new List<ExternalPlaylist>();
+        }
+    }
+
+    private async Task<Song?> GetSongTidalAsync(string trackId)
+    {
+        var response = await SendTidalRequestAsync($"/info/?id={trackId}");
+        
+        if (response == null) return null;
+        
+        var trackInfoWrapper = JsonSerializer.Deserialize<TidalTrackInfoResponseWrapper>(response);
+        if (trackInfoWrapper?.Data == null) return null;
+        
+        return MapTidalTrackInfoToSong(trackInfoWrapper.Data);
+    }
+
+    private async Task<Album?> GetAlbumTidalAsync(string albumId)
+    {
+        // Use dedicated /album/ endpoint for fetching album by ID
+        var response = await SendTidalRequestAsync($"/album/?id={albumId}");
+        
+        if (response == null) return null;
+        
+        var albumResponse = JsonSerializer.Deserialize<TidalAlbumResponse>(response);
+        var albumData = albumResponse?.Data;
+        
+        if (albumData == null) return null;
+        
+        var album = MapTidalAlbumDataToAlbum(albumData);
+        
+        // Add tracks from items
+        if (albumData.Items != null)
+        {
+            foreach (var item in albumData.Items)
+            {
+                if (item.Type == "track" && item.Item != null)
+                {
+                    var song = MapTidalTrackToSong(item.Item);
+                    song.Album = album.Title;
+                    song.AlbumId = album.Id;
+                    song.AlbumArtist = album.Artist;
+                    song.Year ??= album.Year;
+                    song.Genre ??= album.Genre;
+                    song.TotalTracks ??= album.SongCount;
+                    // Use album cover for tracks if track doesn't have one
+                    if (string.IsNullOrEmpty(song.CoverArtUrl))
+                    {
+                        song.CoverArtUrl = album.CoverArtUrl;
+                    }
+                    if (string.IsNullOrEmpty(song.CoverArtUrlLarge))
+                    {
+                        song.CoverArtUrlLarge = album.CoverArtUrlLarge;
+                    }
+                    
+                    if (ShouldIncludeSong(song))
+                    {
+                        album.Songs.Add(song);
+                    }
+                }
+            }
+        }
+        
+        return album;
+    }
+
+    private async Task<Artist?> GetArtistTidalAsync(string artistId)
+    {
+        // Use dedicated /artist/ endpoint for fetching artist by ID
+        var response = await SendTidalRequestAsync($"/artist/?id={artistId}");
+        
+        if (response == null) return null;
+        
+        var artistResponse = JsonSerializer.Deserialize<TidalArtistResponse>(response);
+        
+        if (artistResponse?.Artist == null) return null;
+        
+        return MapTidalArtistDataToArtist(artistResponse);
+    }
+
+    private async Task<List<Album>> GetArtistAlbumsTidalAsync(string artistId)
+    {
+        var response = await SendTidalRequestAsync($"/artist/?f={artistId}&skip_tracks=true");
+        if (response == null) return new List<Album>();
+        
+        var dataResponse = JsonSerializer.Deserialize<TidalArtistAlbumsResponseWrapper>(response);
+        if (dataResponse?.Albums?.Items == null) return new List<Album>();
+
+        var albums = dataResponse.Albums.Items
+            .Select(MapTidalAlbumToAlbum)
+            .ToList();
+        _logger.LogDebug("GetArtistAlbumsTidal artist {ArtistId}: API returned {Count} albums", artistId, albums.Count);
+        return albums;
+    }
+
+    private async Task<ExternalPlaylist?> GetPlaylistTidalAsync(string playlistUuid)
+    {
+        var response = await SendTidalRequestAsync($"/playlist/?id={playlistUuid}");
+        
+        if (response == null)
+        {
+            _logger.LogWarning("Tidal playlist fetch returned null for UUID: {PlaylistUuid}", playlistUuid);
+            return null;
+        }
+        
+        try
+        {
+            var playlistResponse = JsonSerializer.Deserialize<TidalPlaylistResponse>(response);
+            
+            if (playlistResponse?.Playlist == null)
+            {
+                _logger.LogWarning("Tidal playlist response has no playlist data for UUID: {PlaylistUuid}", playlistUuid);
+                return null;
+            }
+            
+            return MapTidalPlaylistToExternalPlaylist(playlistResponse.Playlist);
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "Failed to deserialize Tidal playlist response for UUID: {PlaylistUuid}", playlistUuid);
+            return null;
+        }
+    }
+
+    private async Task<List<Song>> GetPlaylistTracksTidalAsync(string playlistUuid)
+    {
+        var response = await SendTidalRequestAsync($"/playlist/?id={playlistUuid}");
+        
+        if (response == null)
+        {
+            _logger.LogWarning("Tidal playlist tracks fetch returned null for UUID: {PlaylistUuid}", playlistUuid);
+            return new List<Song>();
+        }
+        
+        try
+        {
+            var playlistResponse = JsonSerializer.Deserialize<TidalPlaylistResponse>(response);
+            
+            if (playlistResponse?.Items == null)
+            {
+                _logger.LogWarning("Tidal playlist response has no items for UUID: {PlaylistUuid}", playlistUuid);
+                return new List<Song>();
+            }
+            
+            _logger.LogInformation("Tidal playlist has {Count} items for UUID: {PlaylistUuid}", 
+                playlistResponse.Items.Count, playlistUuid);
+            
+            var songs = new List<Song>();
+            foreach (var item in playlistResponse.Items)
+            {
+                if (item.Type == "track" && item.Item != null)
+                {
+                    var song = MapTidalTrackToSong(item.Item);
+                    if (ShouldIncludeSong(song))
+                    {
+                        songs.Add(song);
+                    }
+                }
+            }
+            
+            return songs;
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "Failed to deserialize Tidal playlist tracks response for UUID: {PlaylistUuid}", playlistUuid);
+            return new List<Song>();
+        }
+    }
+
+    /// <summary>
+    /// Sends a request to the Tidal API with automatic instance failover
+    /// </summary>
+    /// <param name="path">Relative path (e.g., "/search/?s=query")</param>
+    private async Task<string?> SendTidalRequestAsync(string path)
+    {
+        try
+        {
+            var response = await _instanceManager.SendWithFailoverAsync(baseUrl =>
+            {
+                var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}{path}");
+                request.Headers.Add(TidalClientHeader, TidalClientValue);
+                return request;
+            });
+            
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Tidal API returned {StatusCode} for {Path}", response.StatusCode, path);
+                return null;
+            }
+            
+            return await response.Content.ReadAsStringAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogError(ex, "All Tidal instances failed for {Path}", path);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send Tidal request to {Path}", path);
+            return null;
+        }
+    }
+
+    #endregion
+
+    #region Mapping Methods - Qobuz
+
+    private Song MapQobuzTrackToSong(QobuzTrack track)
+    {
+        var externalId = track.Id.ToString();
+        
+        // Parse year from release date
+        int? year = null;
+        var releaseDate = track.ReleaseDateOriginal ?? track.Album?.ReleaseDateOriginal;
+        if (!string.IsNullOrEmpty(releaseDate) && releaseDate.Length >= 4)
+        {
+            if (int.TryParse(releaseDate.Substring(0, 4), out var y))
+            {
+                year = y;
+            }
+        }
+        // Fallback to album released_at timestamp
+        if (year == null && track.Album?.ReleasedAt.HasValue == true)
+        {
+            var dateTime = DateTimeOffset.FromUnixTimeSeconds(track.Album.ReleasedAt.Value).DateTime;
+            year = dateTime.Year;
+        }
+        
+        // Get composers from composer field
+        var contributors = new List<string>();
+        if (track.Composer != null && !string.IsNullOrEmpty(track.Composer.Name))
+        {
+            contributors.Add(track.Composer.Name);
+        }
+        
+        var performerName = track.Performer?.Name ?? "";
+        
+        return new Song
+        {
+            Id = $"ext-squidwtf-song-{externalId}",
+            Title = track.Title ?? "",
+            Artist = performerName,
+            Artists = !string.IsNullOrEmpty(performerName) ? new List<string> { performerName } : new List<string>(),
+            ArtistId = track.Performer != null ? $"ext-squidwtf-artist-{track.Performer.Id}" : null,
+            Album = track.Album?.Title ?? "",
+            AlbumId = track.Album != null ? $"ext-squidwtf-album-{track.Album.Id}" : null,
+            Duration = track.Duration,
+            Track = track.TrackNumber,
+            DiscNumber = track.MediaNumber > 0 ? track.MediaNumber : null,
+            Year = year,
+            Genre = track.Album?.Genre?.Name,
+            Isrc = track.Isrc,
+            Copyright = track.Copyright ?? track.Album?.Copyright,
+            Contributors = contributors,
+            TotalTracks = track.Album?.TracksCount,
+            CoverArtUrl = track.Album?.Image?.Thumbnail ?? track.Album?.Image?.Small,
+            CoverArtUrlLarge = track.Album?.Image?.Large,
+            IsLocal = false,
+            ExternalProvider = "squidwtf",
+            ExternalId = externalId,
+            ExplicitContentLyrics = track.ParentalWarning ? 1 : 0
+        };
+    }
+
+    private Album MapQobuzAlbumToAlbum(QobuzAlbum album)
+    {
+        var externalId = album.Id ?? "";
+        
+        int? year = null;
+        if (album.ReleasedAt.HasValue)
+        {
+            var dateTime = DateTimeOffset.FromUnixTimeSeconds(album.ReleasedAt.Value).DateTime;
+            year = dateTime.Year;
+        }
+        
+        return new Album
+        {
+            Id = $"ext-squidwtf-album-{externalId}",
+            Title = album.Title ?? "",
+            Artist = album.Artist?.Name ?? "",
+            ArtistId = album.Artist != null ? $"ext-squidwtf-artist-{album.Artist.Id}" : null,
+            Year = year,
+            SongCount = album.TracksCount,
+            CoverArtUrl = album.Image?.Small ?? album.Image?.Thumbnail,
+            CoverArtUrlLarge = album.Image?.Large,
+            Genre = album.Genre?.Name,
+            IsLocal = false,
+            ExternalProvider = "squidwtf",
+            ExternalId = externalId
+        };
+    }
+
+    private Artist MapQobuzArtistToArtist(QobuzArtist artist)
+    {
+        var externalId = artist.Id.ToString();
+        
+        return new Artist
+        {
+            Id = $"ext-squidwtf-artist-{externalId}",
+            Name = artist.Name ?? "",
+            ImageUrl = artist.Image?.Large ?? artist.Image?.Thumbnail,
+            AlbumCount = artist.AlbumsCount > 0 ? artist.AlbumsCount : null,
+            IsLocal = false,
+            ExternalProvider = "squidwtf",
+            ExternalId = externalId
+        };
+    }
+
+    #endregion
+
+    #region Mapping Methods - Tidal
+
+    private Song MapTidalTrackToSong(TidalTrack track)
+    {
+        var externalId = track.Id.ToString();
+        
+        // Parse year from album release date
+        int? year = null;
+        if (!string.IsNullOrEmpty(track.Album?.ReleaseDate) && track.Album.ReleaseDate.Length >= 4)
+        {
+            if (int.TryParse(track.Album.ReleaseDate.Substring(0, 4), out var y))
+            {
+                year = y;
+            }
+        }
+        
+        var artistNames = track.Artists?
+            .Where(a => !string.IsNullOrEmpty(a.Name))
+            .Select(a => a.Name!)
+            .ToList() ?? new List<string>();
+        
+        var mainArtistName = track.Artist?.Name ?? (artistNames.FirstOrDefault() ?? "");
+        
+        // Ensure main artist is first in the list
+        if (artistNames.Count == 0 && !string.IsNullOrEmpty(mainArtistName))
+            artistNames.Add(mainArtistName);
+        
+        return new Song
+        {
+            Id = $"ext-squidwtf-song-{externalId}",
+            Title = track.Title ?? "",
+            Artist = mainArtistName,
+            Artists = artistNames,
+            ArtistId = track.Artist != null 
+                ? $"ext-squidwtf-artist-{track.Artist.Id}" 
+                : (track.Artists?.FirstOrDefault() is { } firstArtist 
+                    ? $"ext-squidwtf-artist-{firstArtist.Id}" 
+                    : null),
+            Album = track.Album?.Title ?? "",
+            AlbumId = track.Album != null ? $"ext-squidwtf-album-{track.Album.Id}" : null,
+            Duration = track.Duration,
+            Track = track.TrackNumber,
+            DiscNumber = track.VolumeNumber,
+            Year = year,
+            Isrc = track.Isrc,
+            Bpm = track.Bpm,
+            Copyright = track.Copyright,
+            TotalTracks = track.Album?.NumberOfTracks,
+            CoverArtUrl = GetTidalCoverUrl(track.Album?.Cover, "320x320"),
+            CoverArtUrlLarge = GetTidalCoverUrl(track.Album?.Cover, "1280x1280"),
+            IsLocal = false,
+            ExternalProvider = "squidwtf",
+            ExternalId = externalId,
+            ExplicitContentLyrics = track.Explicit ? 1 : 0
+        };
+    }
+
+    private Song MapTidalTrackInfoToSong(TidalTrackInfoResponse track)
+    {
+        var externalId = track.Id.ToString();
+        
+        // Parse year from album release date
+        int? year = null;
+        if (!string.IsNullOrEmpty(track.Album?.ReleaseDate) && track.Album.ReleaseDate.Length >= 4)
+        {
+            if (int.TryParse(track.Album.ReleaseDate.Substring(0, 4), out var y))
+            {
+                year = y;
+            }
+        }
+        
+        var artistNames = track.Artists?
+            .Where(a => !string.IsNullOrEmpty(a.Name))
+            .Select(a => a.Name!)
+            .ToList() ?? new List<string>();
+        
+        var mainArtistName = track.Artist?.Name ?? (artistNames.FirstOrDefault() ?? "");
+        
+        // Ensure main artist is first in the list
+        if (artistNames.Count == 0 && !string.IsNullOrEmpty(mainArtistName))
+            artistNames.Add(mainArtistName);
+        
+        return new Song
+        {
+            Id = $"ext-squidwtf-song-{externalId}",
+            Title = track.Title ?? "",
+            Artist = mainArtistName,
+            Artists = artistNames,
+            ArtistId = track.Artist != null 
+                ? $"ext-squidwtf-artist-{track.Artist.Id}" 
+                : (track.Artists?.FirstOrDefault() is { } firstTrackInfoArtist 
+                    ? $"ext-squidwtf-artist-{firstTrackInfoArtist.Id}" 
+                    : null),
+            Album = track.Album?.Title ?? "",
+            AlbumId = track.Album != null ? $"ext-squidwtf-album-{track.Album.Id}" : null,
+            Duration = track.Duration,
+            Track = track.TrackNumber,
+            DiscNumber = track.VolumeNumber,
+            Year = year,
+            Isrc = track.Isrc,
+            Bpm = track.Bpm,
+            Copyright = track.Copyright,
+            TotalTracks = track.Album?.NumberOfTracks,
+            CoverArtUrl = GetTidalCoverUrl(track.Album?.Cover, "320x320"),
+            CoverArtUrlLarge = GetTidalCoverUrl(track.Album?.Cover, "1280x1280"),
+            IsLocal = false,
+            ExternalProvider = "squidwtf",
+            ExternalId = externalId,
+            ExplicitContentLyrics = track.Explicit ? 1 : 0
+        };
+    }
+
+    private Album MapTidalAlbumToAlbum(TidalAlbum album)
+    {
+        var externalId = album.Id.ToString();
+        
+        int? year = null;
+        if (!string.IsNullOrEmpty(album.ReleaseDate) && album.ReleaseDate.Length >= 4)
+        {
+            if (int.TryParse(album.ReleaseDate.Substring(0, 4), out var y))
+            {
+                year = y;
+            }
+        }
+        
+        // Get main artist from singular field or first in artists array
+        var mainArtist = album.Artist ?? album.Artists?.FirstOrDefault();
+        
+        return new Album
+        {
+            Id = $"ext-squidwtf-album-{externalId}",
+            Title = album.Title ?? "",
+            Artist = mainArtist?.Name ?? "",
+            ArtistId = mainArtist != null ? $"ext-squidwtf-artist-{mainArtist.Id}" : null,
+            Year = year,
+            SongCount = album.NumberOfTracks,
+            CoverArtUrl = GetTidalCoverUrl(album.Cover, "320x320"),
+            CoverArtUrlLarge = GetTidalCoverUrl(album.Cover, "1280x1280"),
+            IsLocal = false,
+            ExternalProvider = "squidwtf",
+            ExternalId = externalId
+        };
+    }
+
+    private Artist MapTidalArtistToArtist(TidalArtist artist)
+    {
+        var externalId = artist.Id.ToString();
+        
+        return new Artist
+        {
+            Id = $"ext-squidwtf-artist-{externalId}",
+            Name = artist.Name ?? "",
+            ImageUrl = GetTidalImageUrl(artist.Picture),
+            IsLocal = false,
+            ExternalProvider = "squidwtf",
+            ExternalId = externalId
+        };
+    }
+
+    /// <summary>
+    /// Maps TidalAlbumData (from /album/ endpoint) to Album domain model
+    /// </summary>
+    private Album MapTidalAlbumDataToAlbum(TidalAlbumData albumData)
+    {
+        var externalId = albumData.Id.ToString();
+        
+        int? year = null;
+        if (!string.IsNullOrEmpty(albumData.ReleaseDate) && albumData.ReleaseDate.Length >= 4)
+        {
+            if (int.TryParse(albumData.ReleaseDate.Substring(0, 4), out var y))
+            {
+                year = y;
+            }
+        }
+        
+        // Get main artist from singular field or first in artists array
+        var mainArtist = albumData.Artist ?? albumData.Artists?.FirstOrDefault();
+        
+        return new Album
+        {
+            Id = $"ext-squidwtf-album-{externalId}",
+            Title = albumData.Title ?? "",
+            Artist = mainArtist?.Name ?? "",
+            ArtistId = mainArtist != null ? $"ext-squidwtf-artist-{mainArtist.Id}" : null,
+            Year = year,
+            SongCount = albumData.NumberOfTracks,
+            CoverArtUrl = GetTidalCoverUrl(albumData.Cover, "320x320"),
+            CoverArtUrlLarge = GetTidalCoverUrl(albumData.Cover, "1280x1280"),
+            IsLocal = false,
+            ExternalProvider = "squidwtf",
+            ExternalId = externalId
+        };
+    }
+
+    /// <summary>
+    /// Maps TidalArtistResponse (from /artist/ endpoint) to Artist domain model
+    /// </summary>
+    private Artist MapTidalArtistDataToArtist(TidalArtistResponse artistResponse)
+    {
+        var artistData = artistResponse.Artist!;
+        var externalId = artistData.Id.ToString();
+        
+        // Use the cover URL from the response if available, otherwise build from picture ID
+        string? imageUrl = artistResponse.Cover?.Image750;
+        if (string.IsNullOrEmpty(imageUrl))
+        {
+            imageUrl = GetTidalImageUrl(artistData.Picture);
+        }
+        
+        return new Artist
+        {
+            Id = $"ext-squidwtf-artist-{externalId}",
+            Name = artistData.Name ?? "",
+            ImageUrl = imageUrl,
+            IsLocal = false,
+            ExternalProvider = "squidwtf",
+            ExternalId = externalId
+        };
+    }
+
+    private ExternalPlaylist MapTidalPlaylistToExternalPlaylist(TidalPlaylist playlist)
+    {
+        return new ExternalPlaylist
+        {
+            Id = Common.PlaylistIdHelper.CreatePlaylistId("squidwtf", playlist.Uuid ?? ""),
+            Name = playlist.Title ?? "",
+            CuratorName = playlist.Creator?.Name,
+            Provider = "squidwtf",
+            ExternalId = playlist.Uuid ?? "",
+            TrackCount = playlist.NumberOfTracks,
+            Duration = playlist.Duration,
+            CoverUrl = GetTidalCoverUrl(playlist.SquareImage ?? playlist.Image, "320x320")
+        };
+    }
+
+    private static string? GetTidalCoverUrl(string? coverId, string size = "320x320")
+    {
+        if (string.IsNullOrEmpty(coverId)) return null;
+        
+        // Tidal cover IDs need dashes replaced with slashes
+        var formattedId = coverId.Replace("-", "/");
+        return $"https://resources.tidal.com/images/{formattedId}/{size}.jpg";
+    }
+
+    private static string? GetTidalImageUrl(string? pictureId)
+    {
+        if (string.IsNullOrEmpty(pictureId)) return null;
+        
+        var formattedId = pictureId.Replace("-", "/");
+        return $"https://resources.tidal.com/images/{formattedId}/320x320.jpg";
+    }
+
+    #endregion
+
+    #region Helpers
+
+    /// <summary>
+    /// Determines whether a song should be included based on the explicit content filter setting
+    /// </summary>
+    private bool ShouldIncludeSong(Song song)
+    {
+        if (song.ExplicitContentLyrics == null)
+            return true;
+        
+        return _subsonicSettings.ExplicitFilter switch
+        {
+            ExplicitFilter.All => true,
+            ExplicitFilter.ExplicitOnly => song.ExplicitContentLyrics != 3,
+            ExplicitFilter.CleanOnly => song.ExplicitContentLyrics != 1,
+            _ => true
+        };
+    }
+
+    #endregion
+}
