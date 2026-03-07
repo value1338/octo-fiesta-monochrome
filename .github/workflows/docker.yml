@@ -1,0 +1,129 @@
+name: Docker Build & Push
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+    branches: [master, dev]
+  pull_request:
+    types: [closed]
+    branches: [master, dev]
+
+env:
+  DOTNET_VERSION: "9.0.x"
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test --configuration Release --no-build --verbosity normal
+
+  docker:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    # Only run docker build/push on merged PRs, tags, or manual triggers
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' }}
+            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' }}
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            # Tag release: v0.4.0 -> 0.4.0
+            VERSION=${GITHUB_REF#refs/tags/v}
+          elif [[ "${{ github.ref }}" == refs/heads/dev ]]; then
+            # Dev branch: get version from git describe with commit info
+            git fetch --tags
+            DESCRIBE=$(git describe --tags 2>/dev/null || echo "v0.0.0")
+            # v0.4.0 -> 0.4.0-dev
+            # v0.4.0-5-g1a2b3c4 -> 0.4.0-dev.5+g1a2b3c4
+            if [[ "$DESCRIBE" == *-*-* ]]; then
+              # Has commits after tag: v0.4.0-5-g1a2b3c4
+              BASE=$(echo $DESCRIBE | sed 's/^v//' | cut -d'-' -f1)
+              COMMITS=$(echo $DESCRIBE | cut -d'-' -f2)
+              HASH=$(echo $DESCRIBE | cut -d'-' -f3)
+              VERSION="${BASE}-dev.${COMMITS}+${HASH}"
+            else
+              # Exactly on tag: v0.4.0
+              VERSION="${DESCRIBE#v}-dev"
+            fi
+          elif [[ "${{ github.ref }}" == refs/heads/master ]]; then
+            # Master branch: get latest tag
+            git fetch --tags
+            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+            VERSION="${LATEST_TAG#v}"
+          else
+            # Other branches (PR, etc.)
+            VERSION="0.0.0-dev"
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.VERSION }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
