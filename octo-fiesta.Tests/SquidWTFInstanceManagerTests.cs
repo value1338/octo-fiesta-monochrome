@@ -37,8 +37,13 @@ public class SquidWTFInstanceManagerTests
             InstanceTimeoutSeconds = timeoutSeconds
         });
 
+        var subsonicSettings = Options.Create(new SubsonicSettings
+        {
+            MusicService = MusicService.Monochrome
+        });
+
         var loggerMock = new Mock<ILogger<SquidWTFInstanceManager>>();
-        return new SquidWTFInstanceManager(factoryMock.Object, settings, loggerMock.Object);
+        return new SquidWTFInstanceManager(factoryMock.Object, settings, subsonicSettings, loggerMock.Object);
     }
 
     /// <summary>
