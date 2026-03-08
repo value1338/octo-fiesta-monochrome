@@ -30,6 +30,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
     private const string TidalClientValue = "BiniLossless/v3.4";
     
     private bool IsQobuzSource => _settings.Source.Equals("Qobuz", StringComparison.OrdinalIgnoreCase);
+    private bool UseMonochromeForQobuz => IsQobuzSource && _settings.QobuzBackend.Equals("monochrome", StringComparison.OrdinalIgnoreCase);
 
     public SquidWTFMetadataService(
         IHttpClientFactory httpClientFactory, 
@@ -452,16 +453,35 @@ public class SquidWTFMetadataService : IMusicMetadataService
     {
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.Add(QobuzCountryHeader, QobuzCountryValue);
-            
-            var response = await _httpClient.SendAsync(request);
+            HttpResponseMessage response;
+
+            if (UseMonochromeForQobuz)
+            {
+                // url is a full URL like "https://qobuz.squid.wtf/api/get-music?..."
+                // Extract the path+query portion so we can prepend the monochrome instance base URL
+                var uri = new Uri(url);
+                var path = uri.PathAndQuery;
+
+                response = await _instanceManager.SendWithFailoverAsync(baseUrl =>
+                {
+                    var req = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}{path}");
+                    req.Headers.Add(QobuzCountryHeader, QobuzCountryValue);
+                    return req;
+                });
+            }
+            else
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, url);
+                request.Headers.Add(QobuzCountryHeader, QobuzCountryValue);
+                response = await _httpClient.SendAsync(request);
+            }
+
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning("Qobuz API returned {StatusCode} for {Url}", response.StatusCode, url);
                 return null;
             }
-            
+
             return await response.Content.ReadAsStringAsync();
         }
         catch (Exception ex)
