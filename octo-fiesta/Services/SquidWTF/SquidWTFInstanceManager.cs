@@ -20,7 +20,14 @@ public class SquidWTFInstanceManager
     
     // Static Qobuz API (no failover needed as there's only one)
     private const string QobuzBaseUrl = "https://qobuz.squid.wtf";
-    
+
+    // Whether to use monochrome instances for Qobuz instead of qobuz.squid.wtf
+    private bool UseMonochromeForQobuz => _settings.Source.Equals("Qobuz", StringComparison.OrdinalIgnoreCase)
+        && _settings.QobuzBackend.Equals("monochrome", StringComparison.OrdinalIgnoreCase);
+
+    // Whether failover via monochrome instances is needed (Tidal always, Qobuz only if monochrome backend)
+    private bool NeedsInstanceFailover => !_settings.Source.Equals("Qobuz", StringComparison.OrdinalIgnoreCase) || UseMonochromeForQobuz;
+
     // Instance state - shared across all requests during app lifetime
     private List<string>? _tidalInstances;
     private int _currentInstanceIndex;
@@ -51,13 +58,13 @@ public class SquidWTFInstanceManager
     /// </summary>
     public async Task<string> GetBaseUrlAsync()
     {
-        if (_settings.Source.Equals("Qobuz", StringComparison.OrdinalIgnoreCase))
+        if (_settings.Source.Equals("Qobuz", StringComparison.OrdinalIgnoreCase) && !UseMonochromeForQobuz)
         {
             return QobuzBaseUrl;
         }
-        
+
         await EnsureInitializedAsync();
-        return _currentTidalInstance ?? throw new InvalidOperationException("No Tidal instance available");
+        return _currentTidalInstance ?? throw new InvalidOperationException("No instance available");
     }
     
     /// <summary>
@@ -68,15 +75,15 @@ public class SquidWTFInstanceManager
         CancellationToken cancellationToken = default)
     {
         var baseUrl = await GetBaseUrlAsync();
-        
-        // For Qobuz, just send the request (no failover)
-        if (_settings.Source.Equals("Qobuz", StringComparison.OrdinalIgnoreCase))
+
+        // For Qobuz with squidwtf backend, just send the request (no failover)
+        if (!NeedsInstanceFailover)
         {
             var request = createRequest(baseUrl);
             return await _httpClient.SendAsync(request, cancellationToken);
         }
-        
-        // For Tidal, try with failover
+
+        // Tidal or monochrome Qobuz: try with failover
         var attemptedInstances = new HashSet<string>();
         
         while (attemptedInstances.Count < (_tidalInstances?.Count ?? 1))
@@ -100,7 +107,7 @@ public class SquidWTFInstanceManager
                 }
                 
                 // Any other status code — instance is broken/blocked/overloaded
-                _logger.LogWarning("Tidal instance {Instance} returned {StatusCode}, switching to next...", 
+                _logger.LogWarning("Instance {Instance} returned {StatusCode}, switching to next...",
                     currentUrl, (int)response.StatusCode);
                 response.Dispose();
                 SwitchToNextInstance();
@@ -109,19 +116,19 @@ public class SquidWTFInstanceManager
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
                 // Timeout - switch to next instance
-                _logger.LogWarning("Tidal instance {Instance} timed out after {Timeout}s, switching to next...", 
+                _logger.LogWarning("Instance {Instance} timed out after {Timeout}s, switching to next...",
                     currentUrl, TimeoutSeconds);
                 SwitchToNextInstance();
             }
             catch (HttpRequestException ex)
             {
                 // Network error - switch to next instance
-                _logger.LogWarning(ex, "Tidal instance {Instance} failed, switching to next...", currentUrl);
+                _logger.LogWarning(ex, "Instance {Instance} failed, switching to next...", currentUrl);
                 SwitchToNextInstance();
             }
         }
-        
-        throw new InvalidOperationException("All Tidal instances failed or timed out");
+
+        throw new InvalidOperationException("All instances failed or timed out");
     }
     
     /// <summary>
