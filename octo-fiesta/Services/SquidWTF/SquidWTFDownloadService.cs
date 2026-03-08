@@ -35,6 +35,7 @@ public class SquidWTFDownloadService : BaseDownloadService
     // Tidal: HI_RES_LOSSLESS (FLAC 24-bit), LOSSLESS (FLAC 16-bit), HIGH (320kbps AAC), LOW (96kbps AAC)
     
     private bool IsQobuzSource => _squidWTFSettings.Source.Equals("Qobuz", StringComparison.OrdinalIgnoreCase);
+    private bool UseMonochromeForQobuz => IsQobuzSource && _squidWTFSettings.QobuzBackend.Equals("monochrome", StringComparison.OrdinalIgnoreCase);
 
     protected override string ProviderName => "squidwtf";
 
@@ -64,11 +65,25 @@ public class SquidWTFDownloadService : BaseDownloadService
             // Test connectivity to the appropriate backend
             if (IsQobuzSource)
             {
-                using var request = new HttpRequestMessage(HttpMethod.Get, $"{QobuzBaseUrl}/api/get-music?q=test&offset=0");
-                request.Headers.Add(QobuzCountryHeader, QobuzCountryValue);
-                
-                var response = await _httpClient.SendAsync(request);
-                return response.IsSuccessStatusCode;
+                if (UseMonochromeForQobuz)
+                {
+                    // Test Qobuz via monochrome instances with failover
+                    var response = await _instanceManager.SendWithFailoverAsync(baseUrl =>
+                    {
+                        var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/api/get-music?q=test&offset=0");
+                        request.Headers.Add(QobuzCountryHeader, QobuzCountryValue);
+                        return request;
+                    });
+                    return response.IsSuccessStatusCode;
+                }
+                else
+                {
+                    // Test Qobuz via squid.wtf (fixed URL)
+                    using var request = new HttpRequestMessage(HttpMethod.Get, $"{QobuzBaseUrl}/api/get-music?q=test&offset=0");
+                    request.Headers.Add(QobuzCountryHeader, QobuzCountryValue);
+                    var response = await _httpClient.SendAsync(request);
+                    return response.IsSuccessStatusCode;
+                }
             }
             else
             {
@@ -130,12 +145,27 @@ public class SquidWTFDownloadService : BaseDownloadService
     {
         // Get download URL
         var quality = GetQobuzQuality();
-        var url = $"{QobuzBaseUrl}/api/download-music?track_id={trackId}&quality={quality}";
-        
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.Add(QobuzCountryHeader, QobuzCountryValue);
-        
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        var path = $"/api/download-music?track_id={trackId}&quality={quality}";
+
+        HttpResponseMessage response;
+        if (UseMonochromeForQobuz)
+        {
+            // Use monochrome.tf instances with automatic failover
+            response = await _instanceManager.SendWithFailoverAsync(baseUrl =>
+            {
+                var req = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}{path}");
+                req.Headers.Add(QobuzCountryHeader, QobuzCountryValue);
+                return req;
+            }, cancellationToken);
+        }
+        else
+        {
+            // Use squid.wtf directly (fixed URL, no failover)
+            var req = new HttpRequestMessage(HttpMethod.Get, $"{QobuzBaseUrl}{path}");
+            req.Headers.Add(QobuzCountryHeader, QobuzCountryValue);
+            response = await _httpClient.SendAsync(req, cancellationToken);
+        }
+
         response.EnsureSuccessStatusCode();
         
         var json = await response.Content.ReadAsStringAsync(cancellationToken);

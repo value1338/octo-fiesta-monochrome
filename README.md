@@ -91,6 +91,31 @@ See the [Configuration](https://github.com/V1ck3s/octo-fiesta/wiki/Configuration
                         └─────────────────┘
 ```
 
+## Qobuz Backend Selection (SquidWTF)
+
+When using `MUSIC_SERVICE=SquidWTF` with `SQUIDWTF_SOURCE=Qobuz`, you can choose which API serves the Qobuz downloads:
+
+| `SQUIDWTF_QOBUZ_BACKEND` | API used | Failover |
+|--------------------------|----------|----------|
+| `squidwtf` *(default)* | `qobuz.squid.wtf` (fixed URL) | No |
+| `monochrome` | `monochrome.tf` instance list | Yes (automatic) |
+
+**Example `.env`:**
+```env
+MUSIC_SERVICE=SquidWTF
+SQUIDWTF_SOURCE=Qobuz
+SQUIDWTF_QOBUZ_BACKEND=monochrome  # use monochrome API with failover
+SQUIDWTF_INSTANCE_TIMEOUT=5        # seconds before switching instance
+```
+
+**To revert to the original behavior** (squid.wtf), set:
+```env
+SQUIDWTF_QOBUZ_BACKEND=squidwtf
+```
+or simply remove the variable (defaults to `squidwtf`).
+
+> **Note:** `SQUIDWTF_QOBUZ_BACKEND` has no effect when `SQUIDWTF_SOURCE=Tidal` — Tidal always uses monochrome.tf instances.
+
 ## Limitations
 
 - **Playlist Search**: Streaming provider playlists appear in global search but may not show in the Playlists tab due to client-side filtering.
