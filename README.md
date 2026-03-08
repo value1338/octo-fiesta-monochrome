@@ -48,8 +48,8 @@ See the [Compatible Clients](https://github.com/V1ck3s/octo-fiesta/wiki/Compatib
 
 ```bash
 # Clone the repository
-git clone https://github.com/V1ck3s/octo-fiesta.git
-cd octo-fiesta
+git clone https://github.com/value1338/octo-fiesta-monochrome.git
+cd octo-fiesta-monochrome
 
 # Configure
 cp .env.example .env
@@ -59,7 +59,7 @@ nano .env  # Edit with your settings
 docker-compose up -d
 ```
 
-The proxy will be available at `http://localhost:5274`. Point your Subsonic client to this URL instead of your Navidrome server.
+The proxy will be available at `http://localhost:4534`. Point your Subsonic client to this URL instead of your Navidrome server.
 
 See the [Installation](https://github.com/V1ck3s/octo-fiesta/wiki/Installation) wiki page for detailed instructions including manual installation.
 
