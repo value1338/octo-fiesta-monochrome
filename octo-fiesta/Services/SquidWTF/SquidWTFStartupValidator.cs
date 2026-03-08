@@ -12,16 +12,19 @@ public class SquidWTFStartupValidator : BaseStartupValidator
 {
     private readonly SquidWTFSettings _settings;
     private readonly SquidWTFInstanceManager? _instanceManager;
+    private readonly MusicService _musicService;
 
-    public override string ServiceName => "SquidWTF";
+    public override string ServiceName => _musicService == MusicService.Monochrome ? "Monochrome" : "SquidWTF";
 
     public SquidWTFStartupValidator(
-        IOptions<SquidWTFSettings> settings, 
+        IOptions<SquidWTFSettings> settings,
+        IOptions<SubsonicSettings> subsonicSettings,
         HttpClient httpClient,
         IServiceProvider serviceProvider)
         : base(httpClient)
     {
         _settings = settings.Value;
+        _musicService = subsonicSettings.Value.MusicService;
         _instanceManager = serviceProvider.GetService<SquidWTFInstanceManager>();
     }
 

@@ -21,12 +21,8 @@ public class SquidWTFInstanceManager
     // Static Qobuz API (no failover needed as there's only one)
     private const string QobuzBaseUrl = "https://qobuz.squid.wtf";
 
-    // Whether to use monochrome instances for Qobuz instead of qobuz.squid.wtf
-    private bool UseMonochromeForQobuz => _settings.Source.Equals("Qobuz", StringComparison.OrdinalIgnoreCase)
-        && _settings.QobuzBackend.Equals("monochrome", StringComparison.OrdinalIgnoreCase);
-
-    // Whether failover via monochrome instances is needed (Tidal always, Qobuz only if monochrome backend)
-    private bool NeedsInstanceFailover => !_settings.Source.Equals("Qobuz", StringComparison.OrdinalIgnoreCase) || UseMonochromeForQobuz;
+    // Whether failover via monochrome instances is needed (Tidal only; Qobuz uses fixed qobuz.squid.wtf)
+    private bool NeedsInstanceFailover => !_settings.Source.Equals("Qobuz", StringComparison.OrdinalIgnoreCase);
 
     // Instance state - shared across all requests during app lifetime
     private List<string>? _tidalInstances;
@@ -58,7 +54,7 @@ public class SquidWTFInstanceManager
     /// </summary>
     public async Task<string> GetBaseUrlAsync()
     {
-        if (_settings.Source.Equals("Qobuz", StringComparison.OrdinalIgnoreCase) && !UseMonochromeForQobuz)
+        if (_settings.Source.Equals("Qobuz", StringComparison.OrdinalIgnoreCase))
         {
             return QobuzBaseUrl;
         }
@@ -76,14 +72,14 @@ public class SquidWTFInstanceManager
     {
         var baseUrl = await GetBaseUrlAsync();
 
-        // For Qobuz with squidwtf backend, just send the request (no failover)
+        // For Qobuz (qobuz.squid.wtf), just send the request (no failover)
         if (!NeedsInstanceFailover)
         {
             var request = createRequest(baseUrl);
             return await _httpClient.SendAsync(request, cancellationToken);
         }
 
-        // Tidal or monochrome Qobuz: try with failover
+        // Tidal: try with failover
         var attemptedInstances = new HashSet<string>();
         
         while (attemptedInstances.Count < (_tidalInstances?.Count ?? 1))

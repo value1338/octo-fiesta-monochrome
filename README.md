@@ -55,11 +55,13 @@ cd octo-fiesta-monochrome
 cp .env.example .env
 nano .env  # Edit with your settings
 
-# Start
-docker-compose up -d
+# Build and start (builds the image locally from source)
+docker-compose up -d --build
 ```
 
 The proxy will be available at `http://localhost:4534`. Point your Subsonic client to this URL instead of your Navidrome server.
+
+> **Note:** The `--build` flag is required to compile the application from the local source code. Without it, Docker will try to use a cached or remote image that may not include your configuration.
 
 See the [Installation](https://github.com/V1ck3s/octo-fiesta/wiki/Installation) wiki page for detailed instructions including manual installation.
 
@@ -91,30 +93,29 @@ See the [Configuration](https://github.com/V1ck3s/octo-fiesta/wiki/Configuration
                         └─────────────────┘
 ```
 
-## Qobuz Backend Selection (SquidWTF)
+## SquidWTF Source Selection
 
-When using `MUSIC_SERVICE=SquidWTF` with `SQUIDWTF_SOURCE=Qobuz`, you can choose which API serves the Qobuz downloads:
+`SQUIDWTF_SOURCE` controls which music service is used:
 
-| `SQUIDWTF_QOBUZ_BACKEND` | API used | Failover |
-|--------------------------|----------|----------|
-| `squidwtf` *(default)* | `qobuz.squid.wtf` (fixed URL) | No |
-| `monochrome` | `monochrome.tf` instance list | Yes (automatic) |
+| `SQUIDWTF_SOURCE` | Content | API | Failover |
+|-------------------|---------|-----|----------|
+| `Qobuz` *(default)* | Qobuz | `qobuz.squid.wtf` (fixed URL) | No |
+| `Tidal` | Tidal | `monochrome.tf` instance list | Yes (automatic) |
 
-**Example `.env`:**
+**Use Qobuz:**
 ```env
 MUSIC_SERVICE=SquidWTF
 SQUIDWTF_SOURCE=Qobuz
-SQUIDWTF_QOBUZ_BACKEND=monochrome  # use monochrome API with failover
-SQUIDWTF_INSTANCE_TIMEOUT=5        # seconds before switching instance
+SQUIDWTF_QUALITY=27           # 27=FLAC 24-bit/192kHz, 7=FLAC 24-bit/96kHz, 6=FLAC 16-bit, 5=MP3 320kbps
 ```
 
-**To revert to the original behavior** (squid.wtf), set:
+**Use Tidal via monochrome.tf (with automatic instance failover):**
 ```env
-SQUIDWTF_QOBUZ_BACKEND=squidwtf
+MUSIC_SERVICE=SquidWTF
+SQUIDWTF_SOURCE=Tidal
+SQUIDWTF_QUALITY=LOSSLESS     # HI_RES_LOSSLESS, LOSSLESS, HIGH (AAC 320), LOW (AAC 96)
+SQUIDWTF_INSTANCE_TIMEOUT=5   # seconds before switching to next instance
 ```
-or simply remove the variable (defaults to `squidwtf`).
-
-> **Note:** `SQUIDWTF_QOBUZ_BACKEND` has no effect when `SQUIDWTF_SOURCE=Tidal` — Tidal always uses monochrome.tf instances.
 
 ## Limitations
 

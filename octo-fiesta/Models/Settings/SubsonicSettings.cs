@@ -73,7 +73,12 @@ public enum MusicService
     Qobuz,
     
     /// <summary>
-    /// SquidWTF music service (supports Qobuz and Tidal backends)
+    /// Monochrome - Tidal via monochrome.tf instances (always Tidal, no sub-options)
+    /// </summary>
+    Monochrome,
+    
+    /// <summary>
+    /// SquidWTF music service (sub-options: Qobuz or Tidal)
     /// </summary>
     SquidWTF
 }
@@ -100,7 +105,7 @@ public class SubsonicSettings
     /// <summary>
     /// Music service to use (default: SquidWTF)
     /// Environment variable: MUSIC_SERVICE
-    /// Values: "Deezer", "Qobuz", "SquidWTF"
+    /// Values: "Deezer", "Qobuz", "Monochrome", "SquidWTF"
     /// </summary>
     public MusicService MusicService { get; set; } = MusicService.SquidWTF;
     

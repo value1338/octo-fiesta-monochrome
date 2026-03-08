@@ -67,8 +67,14 @@ if (musicService == MusicService.Qobuz)
     builder.Services.AddSingleton<IMusicMetadataService, QobuzMetadataService>();
     builder.Services.AddSingleton<IDownloadService, QobuzDownloadService>();
 }
-else if (musicService == MusicService.SquidWTF)
+else if (musicService == MusicService.Monochrome || musicService == MusicService.SquidWTF)
 {
+    // Monochrome = always Tidal via monochrome.tf (no sub-options)
+    if (musicService == MusicService.Monochrome)
+    {
+        builder.Services.Configure<SquidWTFSettings>(opts => opts.Source = "Tidal");
+    }
+    
     var squidWtfSource = builder.Configuration.GetValue<string>("SquidWTF:Source") ?? "Qobuz";
     var isTidalSource = squidWtfSource.Equals("Tidal", StringComparison.OrdinalIgnoreCase);
     
@@ -78,10 +84,10 @@ else if (musicService == MusicService.SquidWTF)
         builder.Services.AddSingleton<PlaylistSyncService>();
     }
     
-    // Instance manager for automatic API failover (required for Tidal)
+    // Instance manager for automatic API failover (required for Tidal, and for SquidWTF Qobuz+monochrome)
     builder.Services.AddSingleton<SquidWTFInstanceManager>();
     
-    // SquidWTF services (primary) - registered LAST to be injected by default
+    // SquidWTF/Monochrome services (primary) - registered LAST to be injected by default
     builder.Services.AddSingleton<IMusicMetadataService, SquidWTFMetadataService>();
     builder.Services.AddSingleton<IDownloadService, SquidWTFDownloadService>();
 }

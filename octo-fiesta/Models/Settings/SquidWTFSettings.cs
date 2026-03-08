@@ -22,15 +22,7 @@ public class SquidWTFSettings
     
     /// <summary>
     /// Timeout in seconds for API instance requests before switching to next instance
-    /// Only applies to Tidal source and Monochrome Qobuz backend. Defaults to 5 seconds if not specified.
+    /// Only applies to Tidal source (monochrome.tf instances). Defaults to 5 seconds if not specified.
     /// </summary>
     public int InstanceTimeoutSeconds { get; set; } = 5;
-
-    /// <summary>
-    /// Qobuz backend API to use when Source is "Qobuz"
-    /// "squidwtf" (default) = qobuz.squid.wtf (fixed URL, no failover)
-    /// "monochrome" = monochrome.tf instances (dynamic URL list, with automatic failover)
-    /// Environment variable: SQUIDWTF_QOBUZ_BACKEND
-    /// </summary>
-    public string QobuzBackend { get; set; } = "squidwtf";
 }
