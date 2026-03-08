@@ -63,7 +63,7 @@ services:
       # Backend source: Qobuz or Tidal (default: Qobuz)
       - SquidWTF__Source=${SQUIDWTF_SOURCE:-Qobuz}
       # Qobuz API backend (only when Source=Qobuz): squidwtf (default) or monochrome
-      - SquidWTF__QobuzBackend=${SQUIDWTF_QOBUZ_BACKEND:-squidwtf}
+      - SquidWTF__QobuzBackend=${SQUIDWTF_QOBUZ_BACKEND:-monochrome}
       # Preferred audio quality (optional)
       # Qobuz: 27 (FLAC 24-bit/192kHz), 7 (FLAC 24-bit/96kHz), 6 (FLAC 16-bit/44kHz), 5 (MP3 320kbps)
       # Tidal: HI_RES_LOSSLESS (FLAC 24-bit/192kHz), LOSSLESS (FLAC 16-bit/44kHz), HIGH (AAC 320kbps), LOW (AAC 96kbps)
