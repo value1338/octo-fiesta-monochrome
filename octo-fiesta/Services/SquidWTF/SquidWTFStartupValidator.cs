@@ -121,8 +121,13 @@ public class SquidWTFStartupValidator : BaseStartupValidator
             if (response.IsSuccessStatusCode)
             {
                 WriteStatus("SquidWTF API", "REACHABLE", ConsoleColor.Green);
-                WriteStatus("Active Instance", currentInstance ?? "unknown", ConsoleColor.Cyan);
-                WriteDetail("No authentication required - powered by Tidal");
+                if (_musicService == MusicService.Monochrome && !string.IsNullOrEmpty(currentInstance))
+                {
+                    WriteStatus("Active Instance", currentInstance, ConsoleColor.Cyan);
+                }
+                WriteDetail(_musicService == MusicService.Monochrome
+                    ? "No authentication required - powered by Tidal (monochrome.tf)"
+                    : "No authentication required - powered by Tidal (tidal.squid.wtf)");
                 
                 // Try a test search to verify functionality
                 await ValidateSearchFunctionality(cancellationToken);
@@ -144,7 +149,7 @@ public class SquidWTFStartupValidator : BaseStartupValidator
             if (response.IsSuccessStatusCode)
             {
                 WriteStatus("SquidWTF API", "REACHABLE", ConsoleColor.Green);
-                WriteDetail("No authentication required - powered by Tidal");
+                WriteDetail("No authentication required - powered by Tidal (fallback)");
                 return ValidationResult.Success("SquidWTF Tidal validation completed");
             }
             else

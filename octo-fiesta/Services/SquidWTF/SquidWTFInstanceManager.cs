@@ -18,11 +18,15 @@ public class SquidWTFInstanceManager
     private const string InstancesJsonUrl = "https://monochrome.tf/instances.json";
     private const int DefaultTimeoutSeconds = 5;
     
-    // Static Qobuz API (no failover needed as there's only one)
+    // SquidWTF fixed APIs (no failover)
     private const string QobuzBaseUrl = "https://qobuz.squid.wtf";
+    private const string TidalSquidWtfBaseUrl = "https://tidal.squid.wtf";
 
-    // Whether failover via monochrome instances is needed (Tidal only; Qobuz uses fixed qobuz.squid.wtf)
-    private bool NeedsInstanceFailover => !_settings.Source.Equals("Qobuz", StringComparison.OrdinalIgnoreCase);
+    private readonly MusicService _musicService;
+
+    // Monochrome = Tidal via monochrome.tf instances (with failover). SquidWTF = fixed URLs (tidal.squid.wtf or qobuz.squid.wtf).
+    private bool UseMonochromeInstances => _musicService == MusicService.Monochrome;
+    private bool NeedsInstanceFailover => UseMonochromeInstances;
 
     // Instance state - shared across all requests during app lifetime
     private List<string>? _tidalInstances;
@@ -36,10 +40,12 @@ public class SquidWTFInstanceManager
     public SquidWTFInstanceManager(
         IHttpClientFactory httpClientFactory,
         IOptions<SquidWTFSettings> settings,
+        IOptions<SubsonicSettings> subsonicSettings,
         ILogger<SquidWTFInstanceManager> logger)
     {
         _httpClient = httpClientFactory.CreateClient();
         _settings = settings.Value;
+        _musicService = subsonicSettings.Value.MusicService;
         _logger = logger;
         
         // Use configured timeout or default
@@ -59,6 +65,12 @@ public class SquidWTFInstanceManager
             return QobuzBaseUrl;
         }
 
+        // SquidWTF Tidal = tidal.squid.wtf (fixed URL, MP3 + lossless). Monochrome = monochrome.tf instances.
+        if (!UseMonochromeInstances)
+        {
+            return TidalSquidWtfBaseUrl;
+        }
+
         await EnsureInitializedAsync();
         return _currentTidalInstance ?? throw new InvalidOperationException("No instance available");
     }
@@ -72,14 +84,14 @@ public class SquidWTFInstanceManager
     {
         var baseUrl = await GetBaseUrlAsync();
 
-        // For Qobuz (qobuz.squid.wtf), just send the request (no failover)
+        // For Qobuz (qobuz.squid.wtf) or SquidWTF Tidal (tidal.squid.wtf): fixed URL, no failover
         if (!NeedsInstanceFailover)
         {
             var request = createRequest(baseUrl);
             return await _httpClient.SendAsync(request, cancellationToken);
         }
 
-        // Tidal: try with failover
+        // Monochrome Tidal: try with failover
         var attemptedInstances = new HashSet<string>();
         
         while (attemptedInstances.Count < (_tidalInstances?.Count ?? 1))
