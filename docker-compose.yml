@@ -9,7 +9,7 @@
 
 services:
   octo-fiesta:
-    image: ghcr.io/v1ck3s/octo-fiesta
+    image: ghcr.io/value1338/octo-fiesta-monochrome:latest
     container_name: octo-fiesta
     restart: unless-stopped
     ports:
