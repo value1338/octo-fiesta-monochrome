@@ -7,6 +7,31 @@ namespace octo_fiesta.Models.Settings;
 public class SquidWTFSettings
 {
     /// <summary>
+    /// Tidal API URLs from instances.json that are tried <b>after</b> all others (403/timeouts from many servers).
+    /// <c>null</c>: use <see cref="DefaultDeprioritizedTidalApiInstances"/>; empty: no reordering.
+    /// </summary>
+    public List<string>? DeprioritizedTidalApiInstances { get; set; }
+
+    public static readonly string[] DefaultDeprioritizedTidalApiInstances =
+    [
+        "https://eu-central.monochrome.tf",
+        "https://us-west.monochrome.tf",
+        "https://arran.monochrome.tf",
+        "https://api.monochrome.tf",
+        "https://monochrome-api.samidy.com",
+        "https://triton.squid.wtf",
+        "https://wolf.qqdl.site",
+        "https://maus.qqdl.site",
+        "https://vogel.qqdl.site",
+    ];
+
+    /// <summary>
+    /// Tidal API URLs to drop entirely after loading instances.json (optional).
+    /// <c>null</c> or empty: do not remove any URL beyond deprioritization.
+    /// </summary>
+    public List<string>? BlockedTidalApiInstances { get; set; }
+
+    /// <summary>
     /// The backend source to use: "Qobuz" or "Tidal"
     /// Defaults to "Qobuz" if not specified
     /// </summary>

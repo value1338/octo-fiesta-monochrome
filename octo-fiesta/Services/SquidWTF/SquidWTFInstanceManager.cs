@@ -195,15 +195,59 @@ public class SquidWTFInstanceManager
                 throw new InvalidOperationException("No API instances found in instances.json");
             }
             
-            // Normalize URLs (remove trailing slashes)
-            _tidalInstances = instances.Api
-                .Select(url => url.TrimEnd('/'))
-                .ToList();
-            
+            // Normalize URLs (remove trailing slashes), reorder and optional blocklist
+            var rawList = instances.Api.Select(url => url.TrimEnd('/')).ToList();
+
+            var blocked = BuildUrlSet(_settings.BlockedTidalApiInstances);
+            if (blocked.Count > 0)
+            {
+                var before = rawList.Count;
+                rawList = rawList.Where(url => !blocked.Contains(url)).ToList();
+                var removed = before - rawList.Count;
+                if (removed > 0)
+                {
+                    _logger.LogInformation("Removed {Count} blocklisted Tidal API instance(s)", removed);
+                }
+            }
+
+            IEnumerable<string>? deprioritizeSource = _settings.DeprioritizedTidalApiInstances is null
+                ? SquidWTFSettings.DefaultDeprioritizedTidalApiInstances
+                : _settings.DeprioritizedTidalApiInstances;
+
+            var deprioritized = BuildUrlSet(deprioritizeSource);
+
+            List<string> ordered;
+            if (deprioritized.Count == 0)
+            {
+                ordered = rawList;
+            }
+            else
+            {
+                var head = rawList.Where(url => !deprioritized.Contains(url)).ToList();
+                var tail = rawList.Where(url => deprioritized.Contains(url)).ToList();
+                ordered = head.Concat(tail).ToList();
+                if (tail.Count > 0)
+                {
+                    _logger.LogInformation(
+                        "Deprioritized {Count} Tidal API instance(s) to the end of the failover list",
+                        tail.Count);
+                }
+            }
+
+            if (ordered.Count == 0)
+            {
+                _logger.LogWarning("No Tidal API instances left after filtering; using fallback");
+                _tidalInstances = new List<string> { "https://tidal-api.binimum.org" };
+            }
+            else
+            {
+                _tidalInstances = ordered;
+            }
+
             _currentInstanceIndex = 0;
             _currentTidalInstance = _tidalInstances[0];
-            
-            _logger.LogInformation("Loaded {Count} Tidal instances, starting with {Instance}", 
+
+            _logger.LogInformation("Loaded {Count} Tidal instances, starting with {Instance}",
                 _tidalInstances.Count, _currentTidalInstance);
         }
         catch (Exception ex)
@@ -217,6 +261,16 @@ public class SquidWTFInstanceManager
         }
     }
     
+    private static HashSet<string> BuildUrlSet(IEnumerable<string>? urls)
+    {
+        if (urls == null)
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        return new HashSet<string>(
+            urls.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim().TrimEnd('/')),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
     private class InstancesJson
     {
         [JsonPropertyName("api")]

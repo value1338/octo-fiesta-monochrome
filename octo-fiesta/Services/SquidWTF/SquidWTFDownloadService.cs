@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using System.Text.Json;
 using octo_fiesta.Models.Domain;
@@ -245,47 +246,214 @@ public class SquidWTFDownloadService : BaseDownloadService
     }
 
     /// <summary>
-    /// Gets the Tidal manifest, falling back to LOSSLESS if HI_RES_LOSSLESS returns DASH format
-    /// Uses instance manager for automatic failover
+    /// Tidal manifest: prefer <c>/trackManifests/</c> like Monochrome <c>LosslessAPI.getTrack</c>; fallback <c>/track/</c>.
     /// </summary>
     private async Task<(TidalManifest? manifest, string quality)> GetTidalManifestAsync(
         string trackId, string quality, CancellationToken cancellationToken)
     {
+        try
+        {
+            return await GetTidalManifestViaTrackManifestsAsync(trackId, quality, allowHiResDashFallback: true, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "trackManifests failed for track {TrackId}, trying legacy /track/", trackId);
+        }
+
+        return await GetTidalManifestLegacyPlaybackInfoAsync(trackId, quality, cancellationToken);
+    }
+
+    /// <summary>
+    /// <c>/trackManifests/?id=&amp;quality=&amp;adaptive=false&amp;formats=…</c>, then GET signed <c>attributes.uri</c>.
+    /// </summary>
+    private async Task<(TidalManifest? manifest, string quality)> GetTidalManifestViaTrackManifestsAsync(
+        string trackId,
+        string quality,
+        bool allowHiResDashFallback,
+        CancellationToken cancellationToken)
+    {
+        var path = BuildTrackManifestsQueryPath(trackId, quality);
         var response = await _instanceManager.SendWithFailoverAsync(baseUrl =>
         {
-            var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/track/?id={trackId}&quality={quality}");
+            var root = baseUrl.TrimEnd('/');
+            var request = new HttpRequestMessage(HttpMethod.Get, $"{root}{path}");
             request.Headers.Add(TidalClientHeader, TidalClientValue);
             return request;
         }, cancellationToken);
-        
+
         response.EnsureSuccessStatusCode();
-        
+
+        var envelopeJson = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!TryExtractSignedManifestUri(envelopeJson, out var signedUri) || string.IsNullOrEmpty(signedUri))
+        {
+            throw new InvalidOperationException("trackManifests response did not contain a signed manifest URI");
+        }
+
+        using var manifestHttpResponse = await _httpClient.GetAsync(signedUri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        manifestHttpResponse.EnsureSuccessStatusCode();
+
+        var manifestText = await manifestHttpResponse.Content.ReadAsStringAsync(cancellationToken);
+        var contentType = manifestHttpResponse.Content.Headers.ContentType?.MediaType ?? "";
+        var looksLikeDash = contentType.Contains("dash", StringComparison.OrdinalIgnoreCase)
+            || (manifestText.TrimStart().StartsWith('<') && manifestText.Contains("<MPD", StringComparison.Ordinal));
+
+        if (looksLikeDash)
+        {
+            if (allowHiResDashFallback && quality == "HI_RES_LOSSLESS")
+            {
+                Logger.LogWarning(
+                    "HI_RES_LOSSLESS returned DASH for track {TrackId} via trackManifests, falling back to LOSSLESS",
+                    trackId);
+                return await GetTidalManifestViaTrackManifestsAsync(trackId, "LOSSLESS", allowHiResDashFallback: false, cancellationToken);
+            }
+
+            throw new Exception($"Unsupported manifest format (DASH): {contentType}");
+        }
+
+        var manifest = DeserializeTidalManifestFromManifestBody(manifestText);
+        if (manifest?.Urls == null || manifest.Urls.Count == 0)
+        {
+            throw new InvalidOperationException("Manifest had no stream URLs after trackManifests flow");
+        }
+
+        return (manifest, quality);
+    }
+
+    /// <summary>Legacy: base64 manifest from <c>/track/?id=</c>.</summary>
+    private async Task<(TidalManifest? manifest, string quality)> GetTidalManifestLegacyPlaybackInfoAsync(
+        string trackId, string quality, CancellationToken cancellationToken)
+    {
+        var response = await _instanceManager.SendWithFailoverAsync(baseUrl =>
+        {
+            var request = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl.TrimEnd('/')}/track/?id={trackId}&quality={quality}");
+            request.Headers.Add(TidalClientHeader, TidalClientValue);
+            return request;
+        }, cancellationToken);
+
+        response.EnsureSuccessStatusCode();
+
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
         var wrapper = JsonSerializer.Deserialize<TidalTrackDownloadResponseWrapper>(json);
         var trackResponse = wrapper?.Data;
-        
+
         if (string.IsNullOrEmpty(trackResponse?.Manifest))
         {
-            throw new Exception("Failed to get manifest from SquidWTF Tidal");
+            throw new Exception("Failed to get manifest from SquidWTF Tidal (legacy /track/)");
         }
-        
-        // Check if manifest is DASH (XML) format - not supported, need to fallback to LOSSLESS
+
         var manifestMimeType = trackResponse.ManifestMimeType ?? "";
-        if (manifestMimeType.Contains("dash+xml") || manifestMimeType.Contains("application/dash"))
+        if (manifestMimeType.Contains("dash+xml", StringComparison.OrdinalIgnoreCase)
+            || manifestMimeType.Contains("application/dash", StringComparison.OrdinalIgnoreCase))
         {
             if (quality == "HI_RES_LOSSLESS")
             {
-                Logger.LogWarning("HI_RES_LOSSLESS returned DASH format for track {TrackId}, falling back to LOSSLESS", trackId);
-                return await GetTidalManifestAsync(trackId, "LOSSLESS", cancellationToken);
+                Logger.LogWarning(
+                    "HI_RES_LOSSLESS returned DASH for track {TrackId} (legacy /track/), falling back to LOSSLESS",
+                    trackId);
+                return await GetTidalManifestLegacyPlaybackInfoAsync(trackId, "LOSSLESS", cancellationToken);
             }
+
             throw new Exception($"Unsupported manifest format: {manifestMimeType}");
         }
-        
-        // Decode the base64 manifest (JSON format)
+
         var manifestJson = Encoding.UTF8.GetString(Convert.FromBase64String(trackResponse.Manifest));
         var manifest = JsonSerializer.Deserialize<TidalManifest>(manifestJson);
-        
+
         return (manifest, quality);
+    }
+
+    private static string BuildTrackManifestsQueryPath(string trackId, string quality)
+    {
+        var formats = GetTrackManifestFormatsForQuality(quality);
+        var parts = new List<string>
+        {
+            $"id={Uri.EscapeDataString(trackId)}",
+            $"quality={Uri.EscapeDataString(quality)}",
+            "adaptive=false",
+        };
+        foreach (var f in formats)
+        {
+            parts.Add($"formats={Uri.EscapeDataString(f)}");
+        }
+
+        return "/trackManifests/?" + string.Join("&", parts);
+    }
+
+    private static IReadOnlyList<string> GetTrackManifestFormatsForQuality(string quality)
+    {
+        return quality.ToUpperInvariant() switch
+        {
+            "DOLBY_ATMOS" => new[] { "EAC3_JOC" },
+            "HI_RES_LOSSLESS" or "HI_RES" => new[] { "FLAC_HIRES" },
+            "LOSSLESS" or "FLAC" or "FLAC_16" => new[] { "FLAC" },
+            "HIGH" or "AAC_320" or "AAC_HIGH" => new[] { "AACLC" },
+            "LOW" or "AAC_96" or "AAC_LOW" => new[] { "HEAACV1" },
+            _ => new[] { "FLAC" },
+        };
+    }
+
+    private static bool TryExtractSignedManifestUri(string json, [NotNullWhen(true)] out string? uri)
+    {
+        uri = null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return TryExtractSignedManifestUri(doc.RootElement, out uri);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryExtractSignedManifestUri(JsonElement root, [NotNullWhen(true)] out string? uri)
+    {
+        uri = null;
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("data", out var data))
+        {
+            return false;
+        }
+
+        if (data.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        if (data.TryGetProperty("data", out var resource)
+            && resource.ValueKind == JsonValueKind.Object
+            && resource.TryGetProperty("attributes", out var attrA)
+            && attrA.TryGetProperty("uri", out var uriA))
+        {
+            uri = uriA.GetString();
+            return !string.IsNullOrEmpty(uri);
+        }
+
+        if (data.TryGetProperty("attributes", out var attrB) && attrB.TryGetProperty("uri", out var uriB))
+        {
+            uri = uriB.GetString();
+            return !string.IsNullOrEmpty(uri);
+        }
+
+        return false;
+    }
+
+    private static TidalManifest? DeserializeTidalManifestFromManifestBody(string manifestText)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<TidalManifest>(manifestText);
+        }
+        catch (JsonException)
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(
+                manifestText,
+                @"https?://[^\s""'<>]+",
+                System.Text.RegularExpressions.RegexOptions.None,
+                TimeSpan.FromSeconds(1));
+            return match.Success
+                ? new TidalManifest { Urls = new List<string> { match.Value } }
+                : null;
+        }
     }
 
     private string GetTidalQuality()
